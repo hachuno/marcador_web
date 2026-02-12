@@ -216,7 +216,7 @@ class _PantallaControlState extends State<PantallaControl> {
   }
 
   void reset() {
-    _ref.update({'puntosA': 0, 'puntosB': 0, 'setsA': 0, 'setsB': 0, 'historialSets': []});
+    _ref.update({'puntosA': 0, 'puntosB': 0, 'setsA': 0, 'setsB': 0, 'historialSets': [], 'saqueInicialA': true});
   }
 
   @override
@@ -250,8 +250,8 @@ class _PantallaControlState extends State<PantallaControl> {
             nombreB = data['nombreB'] ?? "ROJO";
           }
 
-          // Lógica de bloqueo: Si hay 2 o más puntos sumados, se bloquea.
-          bool bloqueado = (pA + pB) >= 2;
+          // Lógica de bloqueo: Si hay 2 o más puntos sumados, o si hay sets ganados, se bloquea.
+          bool bloqueado = (pA + pB) >= 2 || sA > 0 || sB > 0;
           
           // --- LÓGICA DE TURNO DE SAQUE (igual que en PantallaTV) ---
           int totalPuntos = pA + pB;
@@ -316,62 +316,46 @@ class _PantallaControlState extends State<PantallaControl> {
                   ],
                 ),
               ),
-
-              // --- INDICADOR DE SAQUE ---
+              // --- HISTÓRICO DE SETS ---
               Padding(
                 padding: const EdgeInsets.all(8.0),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                  constraints: const BoxConstraints(minHeight: 65), 
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
                     color: Colors.grey[900],
-                    border: Border.all(color: saqueParaA ? Colors.blueAccent : Colors.redAccent, width: 2),
+                    border: Border.all(color: Colors.white24, width: 1),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Row(
+                  child: Column(
+                    // CAMBIO: Center tanto vertical como horizontalmente
                     mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.center, 
                     children: [
-                      Image.asset('assets/pelota_donic.jpg', width: 35, height: 35),
-                      const SizedBox(width: 12),
-                      Text(
-                        saqueParaA ? "SACA: ${nombreA.toUpperCase()}" : "SACA: ${nombreB.toUpperCase()}",
-                        style: TextStyle(
-                          color: saqueParaA ? Colors.blueAccent : Colors.redAccent,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-
-              // --- HISTÓRICO DE SETS ---
-              if (historialSets.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.all(8.0),
-                  child: Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.grey[900],
-                      border: Border.all(color: Colors.white24, width: 1),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
+                      if (historialSets.isEmpty)
+                        const Center(
+                          child: Text(
+                            "Sin sets jugados",
+                            style: TextStyle(color: Colors.white38, fontSize: 14),
+                          ),
+                        )
+                      else
+                        // Wrap ahora sí se centrará porque su padre (Column) lo permite
                         Wrap(
+                          alignment: WrapAlignment.center,
                           spacing: 8,
                           runSpacing: 8,
                           children: historialSets.asMap().entries.map((entry) {
                             int index = entry.key + 1;
                             Map<String, dynamic> set = entry.value;
-                            String ganador = set['ganador'] == 'A' ? nombreA : nombreB;
                             int pA_set = set['puntosA'] ?? 0;
                             int pB_set = set['puntosB'] ?? 0;
                             bool ganaA = set['ganador'] == 'A';
                             
                             return Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              width: 100,
+                              padding: const EdgeInsets.symmetric(vertical: 6),
                               decoration: BoxDecoration(
                                 color: ganaA ? Colors.blue[900] : Colors.red[900],
                                 borderRadius: BorderRadius.circular(6),
@@ -379,16 +363,20 @@ class _PantallaControlState extends State<PantallaControl> {
                               ),
                               child: Text(
                                 "Set $index: $pA_set-$pB_set",
-                                style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600),
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  color: Colors.white, 
+                                  fontSize: 14, 
+                                  fontWeight: FontWeight.w600
+                                ),
                               ),
                             );
                           }).toList(),
                         ),
-                      ],
-                    ),
+                    ],
                   ),
                 ),
-
+              ),
               // --- MARCADOR DE PUNTAJES, SETS Y SAQUE ---
               Padding(
                 padding: const EdgeInsets.all(8.0),
@@ -398,19 +386,36 @@ class _PantallaControlState extends State<PantallaControl> {
                     // PUNTAJE Y SETS AZUL
                     Row(
                       children: [
-                        Text("$pA", style: const TextStyle(color: Colors.blueAccent, fontSize: 60, fontWeight: FontWeight.bold)),
-                        const SizedBox(width: 8),
-                        Text("$sA", style: const TextStyle(color: Colors.blueAccent, fontSize: 30, fontWeight: FontWeight.bold)),
+                        Text("$pA", style: const TextStyle(color: Colors.white, fontSize: 70, fontWeight: FontWeight.bold)),
+                        const SizedBox(width: 50),
+                        Text("$sA", style: const TextStyle(color: Colors.blueAccent, fontSize: 50, fontWeight: FontWeight.bold)),
                       ],
                     ),
-                    // SEPARADOR
-                    Text("-", style: const TextStyle(color: Colors.white30, fontSize: 40)),
+              // --- INDICADOR DE QUIEN SACA ---
+              Padding(
+                padding: const EdgeInsets.all(8.0),
+                child: Container(
+                  width: 200,
+                  padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[900],
+                    border: Border.all(color: saqueParaA ? Colors.blueAccent : Colors.redAccent, width: 2),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text('SACA: ${saqueParaA ? nombreA : nombreB}', style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold))
+                    ],
+                  ),
+                ),
+              ),
                     // PUNTAJE Y SETS ROJO
                     Row(
                       children: [
-                        Text("$pB", style: const TextStyle(color: Colors.redAccent, fontSize: 60, fontWeight: FontWeight.bold)),
-                        const SizedBox(width: 8),
-                        Text("$sB", style: const TextStyle(color: Colors.redAccent, fontSize: 30, fontWeight: FontWeight.bold)),
+                        Text("$pB", style: const TextStyle(color: Colors.white, fontSize: 70, fontWeight: FontWeight.bold)),
+                        const SizedBox(width: 50),
+                        Text("$sB", style: const TextStyle(color: Colors.redAccent, fontSize: 50, fontWeight: FontWeight.bold)),
                       ],
                     ),
                   ],
