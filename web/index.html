@@ -31,8 +31,19 @@
 
   <title>marcador_web</title>
   <link rel="manifest" href="manifest.json">
+  <script src="//www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
 </head>
 <body>
   <script src="flutter_bootstrap.js" async></script>
+  <script>
+    const context = cast.framework.CastReceiverContext.getInstance();
+    
+    // Configuración para que NO se apague nunca
+    const options = new cast.framework.CastReceiverOptions();
+    options.disableIdleTimeout = true; 
+    
+    // Iniciamos con esas opciones
+    context.start(options);
+  </script>
 </body>
 </html>
