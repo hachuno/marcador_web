@@ -2,15 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
 
-// --- CONFIGURACIÓN DE FIREBASE (WEB) ---
-// Obtén estos datos en: Firebase Console > Configuración del proyecto > General > Tu app > Web (</>)
-const firebaseOptions = FirebaseOptions(
-  apiKey: "AIzaSyAyh0oULCsxC7OAeac2np-MF4bpmSsHFmU", 
-  appId: "1:28038778526:web:379d25e219058e1cb9358f", 
-  messagingSenderId: "28038778526", 
-  projectId: "marcadorpingpong",
-  databaseURL: "https://marcadorpingpong-default-rtdb.firebaseio.com" // ¡Importante!
-);
+import 'firebase_options.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -216,18 +208,15 @@ class _PantallaControlState extends State<PantallaControl> {
         title: const Text("Control de Mesa"),
         actions: [IconButton(icon: const Icon(Icons.refresh, color: Colors.redAccent), onPressed: reset)],
       ),
-      // Usamos StreamBuilder aquí también para reaccionar a los puntos en tiempo real
       body: StreamBuilder(
         stream: _ref.onValue,
         builder: (context, snapshot) {
-          // Datos por defecto si aún no carga
-          int pA = 0;
-          int pB = 0;
-          int sA = 0;
-          int sB = 0;
+          // --- 1. RECUPERAR DATOS ---
+          int pA = 0, pB = 0, sA = 0, sB = 0;
           bool saqueInicialA = true;
           String nombreA = "AZUL";
           String nombreB = "ROJO";
+          List<Map<String, dynamic>> historialSets = []; // Lista para el historial
 
           if (snapshot.hasData && snapshot.data!.snapshot.value != null) {
             final data = Map<String, dynamic>.from(snapshot.data!.snapshot.value as Map);
@@ -238,32 +227,8 @@ class _PantallaControlState extends State<PantallaControl> {
             saqueInicialA = data['saqueInicialA'] ?? true;
             nombreA = data['nombreA'] ?? "AZUL";
             nombreB = data['nombreB'] ?? "ROJO";
-          }
-
-          // Lógica de bloqueo: Si hay 2 o más puntos sumados, o si hay sets ganados, se bloquea.
-          bool bloqueado = (pA + pB) >= 2 || sA > 0 || sB > 0;
-          
-          // --- LÓGICA DE TURNO DE SAQUE (igual que en PantallaTV) ---
-          int totalPuntos = pA + pB;
-          int setActual = sA + sB + 1;  // Set en el que estamos jugando
-          bool esSetImpar = (setActual % 2 == 1);  // true si set es impar (1, 3, 5...)
-          
-          // Determinar quién saca primero EN ESTE SET
-          bool saqueInicialEnEsteSet = esSetImpar ? saqueInicialA : !saqueInicialA;
-          
-          // Aplicar la alternancia dentro del set
-          bool turnoBaseParaA;
-          if (pA >= 10 && pB >= 10) {
-            turnoBaseParaA = (totalPuntos % 2 == 0);
-          } else {
-            turnoBaseParaA = ((totalPuntos ~/ 2) % 2 == 0);
-          }
-          bool saqueParaA = saqueInicialEnEsteSet ? turnoBaseParaA : !turnoBaseParaA;
-          
-          // --- EXTRAER HISTÓRICO ---
-          List<Map<String, dynamic>> historialSets = [];
-          if (snapshot.hasData && snapshot.data!.snapshot.value != null) {
-            final data = Map<String, dynamic>.from(snapshot.data!.snapshot.value as Map);
+            
+            // Recuperamos el historial
             if (data['historialSets'] != null) {
               historialSets = List<Map<String, dynamic>>.from(
                 (data['historialSets'] as List).map((e) => Map<String, dynamic>.from(e as Map))
@@ -271,69 +236,81 @@ class _PantallaControlState extends State<PantallaControl> {
             }
           }
 
+          // Actualizamos controladores de texto si cambiaron externamente
+          if (_nombreAController.text != nombreA) _nombreAController.text = nombreA;
+          if (_nombreBController.text != nombreB) _nombreBController.text = nombreB;
+
+          bool bloqueado = (pA + pB) >= 2 || sA > 0 || sB > 0;
+          
+          // Lógica de Saque
+          int totalPuntos = pA + pB;
+          int setActual = sA + sB + 1;
+          bool esSetImpar = (setActual % 2 == 1);
+          bool saqueInicialEnEsteSet = esSetImpar ? saqueInicialA : !saqueInicialA;
+          bool turnoBaseParaA;
+          if (pA >= 10 && pB >= 10) turnoBaseParaA = (totalPuntos % 2 == 0);
+          else turnoBaseParaA = ((totalPuntos ~/ 2) % 2 == 0);
+          bool saqueParaA = saqueInicialEnEsteSet ? turnoBaseParaA : !turnoBaseParaA;
+
+          // --- 2. LOGICA DE INVERSIÓN TOTAL ---
+          // Si la suma de sets es impar, invertimos TODO (Nombres, Puntos, Historial, Botones)
+          bool invertirLados = (sA + sB) % 2 != 0;
+
+          // --- 3. DEFINICIÓN DE BLOQUES ---
+          
+          // A. BLOQUE SUPERIOR (Nombre y Saque)
+          Widget topAzul = Row(children: [
+             Expanded(child: TextField(controller: _nombreAController, style: const TextStyle(color: Colors.blueAccent), decoration: const InputDecoration(labelText: "Azul", isDense: true), onChanged: (v) => actualizarNombre('A', v))),
+             const SizedBox(width: 5),
+             _BotonSaqueConPelota(seleccionado: saqueInicialA, bloqueado: bloqueado, color: Colors.blue[800]!, onTap: () => cambiarSaqueInicial(true)),
+          ]);
+          Widget topRojo = Row(children: [
+             Expanded(child: TextField(controller: _nombreBController, style: const TextStyle(color: Colors.redAccent), decoration: const InputDecoration(labelText: "Rojo", isDense: true), onChanged: (v) => actualizarNombre('B', v))),
+             const SizedBox(width: 5),
+             _BotonSaqueConPelota(seleccionado: !saqueInicialA, bloqueado: bloqueado, color: Colors.red[800]!, onTap: () => cambiarSaqueInicial(false)),
+          ]);
+
+          // B. BLOQUE MEDIO (Marcador y Sets)
+          Widget scoreAzul = Column(children: [
+             Text("$pA", style: const TextStyle(color: Colors.white, fontSize: 60, height: 1, fontWeight: FontWeight.bold)), 
+             Text("SETS: $sA", style: const TextStyle(color: Colors.blueAccent, fontSize: 20, fontWeight: FontWeight.bold))
+          ]);
+          Widget scoreRojo = Column(children: [
+             Text("$pB", style: const TextStyle(color: Colors.white, fontSize: 60, height: 1, fontWeight: FontWeight.bold)), 
+             Text("SETS: $sB", style: const TextStyle(color: Colors.redAccent, fontSize: 20, fontWeight: FontWeight.bold))
+          ]);
+
+          // C. BLOQUE INFERIOR (Botones Gigantes)
+          Widget botonAzul = _BotonJugador(color: Colors.blue[900]!, label: "AZUL", onSumar: () => actualizarPunto('A', 1), onRestar: () => actualizarPunto('A', -1));
+          Widget botonRojo = _BotonJugador(color: Colors.red[900]!, label: "ROJO", onSumar: () => actualizarPunto('B', 1), onRestar: () => actualizarPunto('B', -1));
+
+          // ELEMENTOS FIJOS
+          Widget separadorVS = const Padding(padding: EdgeInsets.symmetric(horizontal: 8.0), child: Text("VS", style: TextStyle(color: Colors.grey, fontSize: 10)));
+          Widget indicadorSaque = Container(
+             padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+             decoration: BoxDecoration(color: Colors.grey[900], border: Border.all(color: saqueParaA ? Colors.blueAccent : Colors.redAccent, width: 2), borderRadius: BorderRadius.circular(30)),
+             child: const Text('SACA', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+          );
+
           return Column(
             children: [
-              // --- SECCIÓN NOMBRES ---
+              // 1. FILA NOMBRES (INVERTIBLE)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                 child: Row(
                   children: [
-                    // --- EQUIPO AZUL ---
-                    Expanded( // <--- ESTO ES LA SOLUCIÓN (Reemplaza al SizedBox de 300)
-                      child: TextField(
-                        controller: _nombreAController,
-                        style: const TextStyle(color: Colors.blueAccent),
-                        decoration: const InputDecoration(
-                          labelText: "Azul", 
-                          //prefixIcon: Icon(Icons.person, color: Colors.blue, size: 15.0),
-                          isDense: true, // Hace el campo más compacto verticalmente
-                        ),
-                        onChanged: (v) => actualizarNombre('A', v),
-                      ),
-                    ),
-                    const SizedBox(width: 5),
-                    _BotonSaqueConPelota(
-                      seleccionado: saqueInicialA,
-                      bloqueado: bloqueado,
-                      color: Colors.blue[800]!,
-                      onTap: () => cambiarSaqueInicial(true),
-                    ),
-                    
-                    // --- SEPARADOR CENTRAL ---
-                    const Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 8.0),
-                      child: Text("VS", style: TextStyle(color: Colors.grey, fontSize: 10)),
-                    ),
-
-                    // --- EQUIPO ROJO ---
-                    Expanded( // <--- ESTO ES LA SOLUCIÓN
-                      child: TextField(
-                        controller: _nombreBController,
-                        style: const TextStyle(color: Colors.redAccent),
-                        decoration: const InputDecoration(
-                          labelText: "Rojo", 
-                          //prefixIcon: Icon(Icons.person, color: Colors.red, size: 15.0),
-                          isDense: true,
-                        ),
-                        onChanged: (v) => actualizarNombre('B', v),
-                      ),
-                    ),
-                    const SizedBox(width: 5),
-                    _BotonSaqueConPelota(
-                      seleccionado: !saqueInicialA,
-                      bloqueado: bloqueado,
-                      color: Colors.red[800]!,
-                      onTap: () => cambiarSaqueInicial(false),
-                    ),
+                    Expanded(child: invertirLados ? topRojo : topAzul),
+                    separadorVS,
+                    Expanded(child: invertirLados ? topAzul : topRojo),
                   ],
                 ),
               ),
-              // --- HISTÓRICO DE SETS ---
+
+              // 2. HISTORIAL DE SETS (¡AQUÍ ESTÁ!)
               Padding(
                 padding: const EdgeInsets.all(8.0),
                 child: Container(
-                  //constraints: const BoxConstraints(minHeight: 68), // Altura mínima para mostrar al menos un set o el mensaje de "Sin sets"
-                  height: 82, // Altura fija para mostrar hasta 2 filas de sets sin expandir demasiado
+                  height: 82,
                   width: double.infinity,
                   padding: const EdgeInsets.all(6),
                   decoration: BoxDecoration(
@@ -342,23 +319,15 @@ class _PantallaControlState extends State<PantallaControl> {
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Column(
-                    // CAMBIO: Center tanto vertical como horizontalmente
                     mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.center, 
                     children: [
                       if (historialSets.isEmpty)
-                        const Center(
-                          child: Text(
-                            "Sin sets jugados",
-                            style: TextStyle(color: Colors.white38, fontSize: 14),
-                          ),
-                        )
+                        const Center(child: Text("Sin sets jugados", style: TextStyle(color: Colors.white38, fontSize: 14)))
                       else
-                        // Wrap ahora sí se centrará porque su padre (Column) lo permite
                         Wrap(
                           alignment: WrapAlignment.center,
-                          spacing: 5, // Espacio horizontal entre sets
-                          runSpacing: 5, // Espacio vertical entre filas de sets
+                          spacing: 5,
+                          runSpacing: 5,
                           children: historialSets.asMap().entries.map((entry) {
                             int index = entry.key + 1;
                             Map<String, dynamic> set = entry.value;
@@ -366,8 +335,13 @@ class _PantallaControlState extends State<PantallaControl> {
                             int pB_set = set['puntosB'] ?? 0;
                             bool ganaA = set['ganador'] == 'A';
                             
+                            // TRUCO: Si invertimos lados, mostramos "PuntosB - PuntosA" para que coincida con lo que ves
+                            String resultadoTexto = invertirLados 
+                                ? "$pB_set-$pA_set" 
+                                : "$pA_set-$pB_set";
+
                             return Container(
-                              width: 90, // Ancho fijo para cada set
+                              width: 90,
                               padding: const EdgeInsets.symmetric(vertical: 5),
                               decoration: BoxDecoration(
                                 color: ganaA ? Colors.blue[900] : Colors.red[900],
@@ -375,13 +349,9 @@ class _PantallaControlState extends State<PantallaControl> {
                                 border: Border.all(color: ganaA ? Colors.blueAccent : Colors.redAccent, width: 1),
                               ),
                               child: Text(
-                                "Set $index: $pA_set-$pB_set",
+                                "Set $index: $resultadoTexto",
                                 textAlign: TextAlign.center,
-                                style: const TextStyle(
-                                  color: Colors.white, 
-                                  fontSize: 14, 
-                                  fontWeight: FontWeight.w600
-                                ),
+                                style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600),
                               ),
                             );
                           }).toList(),
@@ -390,60 +360,27 @@ class _PantallaControlState extends State<PantallaControl> {
                   ),
                 ),
               ),
-              // --- MARCADOR DE PUNTAJES, SETS Y SAQUE ---
+
+              // 3. FILA MARCADOR CENTRAL (INVERTIBLE)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 10),
-                child: Column(
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
                   children: [
-                    // 2. MARCADOR DE PUNTOS Y SETS
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceAround,
-                      crossAxisAlignment: CrossAxisAlignment.center, // Cambiado a center para alinear con el indicador
-                      children: [
-                        // --- LADO AZUL ---
-                        Column(
-                          children: [
-                            Text("$pA", style: const TextStyle(color: Colors.white, fontSize: 60, height: 1, fontWeight: FontWeight.bold)),
-                            Text("SETS: $sA", style: const TextStyle(color: Colors.blueAccent, fontSize: 20, fontWeight: FontWeight.bold)),
-                          ],
-                        ),
-                        
-                        // 1. INDICADOR DE SAQUE (Ahora entre los puntajes)
-                        Container(
-                          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-                          decoration: BoxDecoration(
-                            color: Colors.grey[900],
-                            border: Border.all(
-                              color: saqueParaA ? Colors.blueAccent : Colors.redAccent, 
-                              width: 2
-                            ),
-                            borderRadius: BorderRadius.circular(30),
-                          ),
-                          child: Text(
-                            'SACA', // Simplificado para que quepa mejor en medio
-                            style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)
-                          ),
-                        ),
-                        // --- LADO ROJO ---
-                        Column(
-                          children: [
-                            Text("$pB", style: const TextStyle(color: Colors.white, fontSize: 60, height: 1, fontWeight: FontWeight.bold)),
-                            Text("SETS: $sB", style: const TextStyle(color: Colors.redAccent, fontSize: 20, fontWeight: FontWeight.bold)),
-                          ],
-                        ),
-                      ],
-                    ),
+                    invertirLados ? scoreRojo : scoreAzul,
+                    indicadorSaque, 
+                    invertirLados ? scoreAzul : scoreRojo,
                   ],
                 ),
               ),
-              // --- BOTONES DE PUNTOS ---
+
+              // 4. FILA BOTONES GIGANTES (INVERTIBLE)
               Expanded(
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _BotonJugador(color: Colors.blue[900]!, label: "AZUL", onSumar: () => actualizarPunto('A', 1), onRestar: () => actualizarPunto('A', -1)),
-                    _BotonJugador(color: Colors.red[900]!, label: "ROJO", onSumar: () => actualizarPunto('B', 1), onRestar: () => actualizarPunto('B', -1)),
-                  ],
+                  children: invertirLados 
+                    ? [botonRojo, botonAzul] 
+                    : [botonAzul, botonRojo], 
                 ),
               ),
             ],
