@@ -6,7 +6,9 @@ Write-Host "================================" -ForegroundColor Cyan
 Write-Host ""
 
 Write-Host "[*] Building Flutter web..." -ForegroundColor Green
-flutter build web
+flutter clean
+flutter pub get
+flutter build web --release --dart-define=FLUTTER_WEB_RENDERER=html
 
 if ($LASTEXITCODE -eq 0) {
     Write-Host ""

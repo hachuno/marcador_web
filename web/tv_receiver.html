@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+
+  <title>Marcador Ping Pong TV</title>
+  
+  <style>
+    body { 
+      background-color: #000; 
+      color: white; 
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+      margin: 0; 
+      overflow: hidden; 
+      display: flex; 
+      height: 100vh; 
+      width: 100vw; 
+    }
+    .panel { 
+      flex: 1; 
+      display: flex; 
+      flex-direction: column; 
+      justify-content: flex-start;
+      align-items: center; 
+      position: relative; 
+      padding-top: 5vh;
+    }
+    .divider { 
+      width: 4px; 
+      background-color: rgba(255,255,255,0.2); 
+    }
+    
+    /* 1. NOMBRE */
+    .name { 
+      font-size: 5vw; 
+      font-weight: 300; 
+      color: rgba(255,255,255,0.8); 
+      text-transform: uppercase; 
+      text-align: center;
+      margin-bottom: 2vh;
+    }
+
+    /* 2. CONTENEDOR MÁGICO */
+    .score-wrapper {
+      position: relative; /* Referencia para la pelota */
+      display: inline-block; /* Se encoge al tamaño del número */
+      margin-top: 5vh;
+      /* Al ser inline-block dentro de un flex center (el panel), 
+         el número quedará perfectamente centrado en la pantalla */
+    }
+
+    /* 3. PUNTAJE */
+    .score { 
+      font-size: 25vw; 
+      font-weight: bold; 
+      line-height: 0.8;
+      text-align: center;
+      margin-top: 4vh;
+    }
+
+    /* 4. INDICADOR DE SAQUE (POSICIÓN FIJA ABSOLUTA) */
+    .serve-indicator {
+      position: absolute; /* Se mueve libremente dentro del panel */
+      
+      /* COORDENADAS: Juega con estos dos números */
+      top: 35%;   /* Altura: 50% es la mitad exacta. 42% es un poco más arriba. */
+      right: 8%; /* Lateral: 15% desde el borde derecho del panel */
+      
+      width: 4vw;
+      height: 4vw;
+      background-color: #fff;
+      border-radius: 50%;
+      box-shadow: 0 0 20px rgba(255,255,255, 0.9);
+      
+      opacity: 0; 
+      transition: opacity 0.3s ease-in-out;
+      pointer-events: none; /* Para que no moleste */
+    }
+
+    /* 5. SETS (ABAJO) */
+    .sets-container {
+      margin-top: auto; 
+      margin-bottom: 8vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .sets-label {
+      font-size: 2vw;
+      color: #777;
+      margin-bottom: 5px;
+      text-transform: uppercase;
+      letter-spacing: 3px;
+    }
+    .sets-badge { 
+      padding: 0.5vw 4vw; 
+      border-radius: 15px; 
+      font-size: 8vw; 
+      font-weight: bold; 
+      min-width: 5vw;
+      text-align: center;
+      background-color: #222;
+    }
+
+    /* COLORES */
+    .text-white { color: white; }
+    .text-yellow { color: #FFEB3B; }
+    .text-red { color: #FF5252; }
+    .bg-blue { background-color: #1565C0; box-shadow: 0 4px 15px rgba(21, 101, 192, 0.4); }
+    .bg-red { background-color: #C62828; box-shadow: 0 4px 15px rgba(198, 40, 40, 0.4); }
+  </style>
+
+  <script src="//www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+</head>
+<body>
+
+    <div class="panel" id="panelA" style="background-color: #050505;">
+    <div class="name" id="nameA">JUGADOR 1</div>
+    
+    <div class="score" id="scoreA">0</div>
+
+    <div class="serve-indicator" id="ballA"></div>
+    
+    <div class="sets-container">
+        <div class="sets-label">SETS</div>
+        <div class="sets-badge bg-blue" id="badgeA">0</div>
+    </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="panel" id="panelB" style="background-color: #050505;">
+    <div class="name" id="nameB">JUGADOR 2</div>
+    
+    <div class="score" id="scoreB">0</div>
+
+    <div class="serve-indicator" id="ballB"></div>
+
+    <div class="sets-container">
+        <div class="sets-label">SETS</div>
+        <div class="sets-badge bg-red" id="badgeB">0</div>
+    </div>
+    </div>
+
+  <script>
+    // 1. CHROMECAST CONFIG
+    if (typeof cast !== 'undefined') {
+      const context = cast.framework.CastReceiverContext.getInstance();
+      context.start({ disableIdleTimeout: true });
+    } else {
+      console.log("Modo PC: Saltando Cast.");
+    }
+
+    // 2. FIREBASE CONFIG
+    const firebaseConfig = {
+      apiKey: "AIzaSyAyh0oULCsxC7OAeac2np-MF4bpmSsHFmU", 
+      databaseURL: "https://marcadorpingpong-default-rtdb.firebaseio.com",
+      projectId: "marcadorpingpong",
+      appId: "1:28038778526:web:379d25e219058e1cb9358f"
+    };
+    firebase.initializeApp(firebaseConfig);
+
+    const db = firebase.database().ref('partido');
+    
+    db.on('value', (snapshot) => {
+      const data = snapshot.val();
+      if (!data) return;
+
+      const pA = parseInt(data.puntosA || 0);
+      const pB = parseInt(data.puntosB || 0);
+      const sA = parseInt(data.setsA || 0);
+      const sB = parseInt(data.setsB || 0);
+      
+      document.getElementById('scoreA').innerText = pA;
+      document.getElementById('scoreB').innerText = pB;
+      document.getElementById('badgeA').innerText = sA;
+      document.getElementById('badgeB').innerText = sB;
+      document.getElementById('nameA').innerText = (data.nombreA || "AZUL").toUpperCase();
+      document.getElementById('nameB').innerText = (data.nombreB || "ROJO").toUpperCase();
+
+      updateColor('scoreA', pA, pB);
+      updateColor('scoreB', pB, pA);
+
+      // LÓGICA DE SAQUE
+      const saqueA = data.saqueInicialA;
+      const totalPuntos = pA + pB;
+      let leTocaAQuienEmpezo;
+
+      if (pA >= 10 && pB >= 10) {
+        leTocaAQuienEmpezo = (totalPuntos % 2 === 0); 
+      } else {
+        leTocaAQuienEmpezo = (Math.floor(totalPuntos / 2) % 2 === 0);
+      }
+
+      const setActual = sA + sB + 1;
+      const esSetImpar = (setActual % 2 !== 0);
+      const quienEmpiezaEsteSet = esSetImpar ? saqueA : !saqueA;
+      const sacaA = quienEmpiezaEsteSet ? leTocaAQuienEmpezo : !leTocaAQuienEmpezo;
+
+      document.getElementById('ballA').style.opacity = sacaA ? "1" : "0";
+      document.getElementById('ballB').style.opacity = sacaA ? "0" : "1";
+    });
+
+    function updateColor(id, myPts, otherPts) {
+      const el = document.getElementById(id);
+      el.className = 'score';
+      if (myPts >= 11 && (myPts - otherPts) >= 2) el.classList.add('text-red');
+      else if (myPts >= 10 && myPts > otherPts) el.classList.add('text-yellow');
+      else el.classList.add('text-white');
+    }
+  </script>
+</body>
+</html>

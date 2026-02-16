@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
+import 'google_cast_button.dart';
 
 import 'firebase_options.dart';
 
@@ -206,7 +207,17 @@ class _PantallaControlState extends State<PantallaControl> {
     return Scaffold(
       appBar: AppBar(
         title: const Text("Control de Mesa"),
-        actions: [IconButton(icon: const Icon(Icons.refresh, color: Colors.redAccent), onPressed: reset)],
+        actions: [
+          // AQUI ESTA EL BOTON NUEVO
+          const Padding(
+            padding: EdgeInsets.only(right: 10),
+            child: GoogleCastButton(), 
+          ),
+          IconButton(
+            icon: const Icon(Icons.refresh, color: Colors.redAccent), 
+            onPressed: reset
+          )
+        ],          
       ),
       body: StreamBuilder(
         stream: _ref.onValue,
