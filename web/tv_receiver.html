@@ -189,6 +189,9 @@
 
       // LÓGICA DE SAQUE
       const saqueA = data.saqueInicialA;
+      // Variable para saber si hay un saque definido
+      const haySaque = (saqueA !== null && saqueA !== undefined);
+
       const totalPuntos = pA + pB;
       let leTocaAQuienEmpezo;
 
@@ -200,11 +203,19 @@
 
       const setActual = sA + sB + 1;
       const esSetImpar = (setActual % 2 !== 0);
+      // Usamos true por defecto para evitar errores matemáticos, pero luego ocultamos
+      const saqueBase = haySaque ? saqueA : true;
       const quienEmpiezaEsteSet = esSetImpar ? saqueA : !saqueA;
       const sacaA = quienEmpiezaEsteSet ? leTocaAQuienEmpezo : !leTocaAQuienEmpezo;
 
-      document.getElementById('ballA').style.opacity = sacaA ? "1" : "0";
-      document.getElementById('ballB').style.opacity = sacaA ? "0" : "1";
+      // SI NO HAY SAQUE DEFINIDO, OCULTAMOS AMBAS PELOTAS
+      if (!haySaque) {
+        document.getElementById('ballA').style.opacity = "0";
+        document.getElementById('ballB').style.opacity = "0";
+      } else {
+        document.getElementById('ballA').style.opacity = sacaA ? "1" : "0";
+        document.getElementById('ballB').style.opacity = sacaA ? "0" : "1";
+      }
     });
 
     function updateColor(id, myPts, otherPts) {

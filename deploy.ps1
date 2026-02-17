@@ -18,10 +18,11 @@ if ($LASTEXITCODE -eq 0) {
     firebase deploy
     
     if ($LASTEXITCODE -eq 0) {
-        Write-Host ""
+        Write-Host "================================" -ForegroundColor Green
         Write-Host "[OK] Deploy completado!" -ForegroundColor Green
-        Write-Host ""
-        Write-Host "[SUCCESS] Aplicación actualizada en Firebase!" -ForegroundColor Cyan
+        Write-Host "================================"   -ForegroundColor Green
+        Write-Host "[SUCCESS] Aplicación actualizada en Firebase!" -ForegroundColor Green
+        Write-Host "================================" -ForegroundColor Green
     } else {
         Write-Host ""
         Write-Host "[ERROR] Error en el deploy" -ForegroundColor Red

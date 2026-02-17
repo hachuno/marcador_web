@@ -14,6 +14,9 @@ class GoogleCastButton extends StatelessWidget {
     // Este es el componente web oficial de Google
     ui.platformViewRegistry.registerViewFactory(viewType, (int viewId) {
       final element = html.Element.tag('google-cast-launcher');
+
+      element.style.width = '100%';
+      element.style.height = '100%';
       
       // Estilos para forzar que sea blanco y visible en la AppBar oscura
       element.style.setProperty('--connected-color', 'white');
