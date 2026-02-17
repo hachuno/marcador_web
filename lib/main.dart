@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'google_cast_button.dart';
@@ -7,6 +8,11 @@ import 'firebase_options.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,   // Solo vertical normal
+    DeviceOrientation.portraitDown, // (Opcional) Vertical invertido
+  ]);
+
   await Firebase.initializeApp(options: firebaseOptions);
   runApp(const MyApp());
 }
@@ -46,14 +52,14 @@ class SeleccionModo extends StatelessWidget {
             const SizedBox(height: 40),
             ElevatedButton.icon(
               icon: const Icon(Icons.phone_iphone),
-              label: const Text("SOY EL IPHONE (Control)", style: TextStyle(fontSize: 20)),
+              label: const Text("Mesa de Control", style: TextStyle(fontSize: 20)),
               style: ElevatedButton.styleFrom(padding: const EdgeInsets.all(20)),
               onPressed: () => Navigator.pushNamed(context, '/control'),
             ),
             const SizedBox(height: 20),
             ElevatedButton.icon(
               icon: const Icon(Icons.tv),
-              label: const Text("SOY LA TV (Pantalla)", style: TextStyle(fontSize: 20)),
+              label: const Text("Pantalla de Marcador", style: TextStyle(fontSize: 20)),
               style: ElevatedButton.styleFrom(padding: const EdgeInsets.all(20)),
               onPressed: () => Navigator.pushNamed(context, '/tv'),
             ),
@@ -78,108 +84,163 @@ class _PantallaControlState extends State<PantallaControl> {
   final TextEditingController _nombreAController = TextEditingController();
   final TextEditingController _nombreBController = TextEditingController();
 
+  final FocusNode _focusA = FocusNode();
+  final FocusNode _focusB = FocusNode();
+
+  bool _procesando = false;
+
   @override
   void initState() {
     super.initState();
     // Cargamos los nombres existentes una sola vez al iniciar
     _ref.child('nombreA').get().then((s) { if(s.exists) _nombreAController.text = s.value.toString(); });
     _ref.child('nombreB').get().then((s) { if(s.exists) _nombreBController.text = s.value.toString(); });
+
+    // Vigilante para Jugador 1 (A)
+    _focusA.addListener(() {
+      // Si perdió el foco (ya no escribe) Y está vacío
+      if (!_focusA.hasFocus && _nombreAController.text.trim().isEmpty) {
+        _nombreAController.text = "Jugador 1"; // Restaurar texto visual
+        actualizarNombre('A', "Jugador 1");    // Guardar en Firebase
+      }
+    });
+
+    // Vigilante para Jugador 2 (B)
+    _focusB.addListener(() {
+      if (!_focusB.hasFocus && _nombreBController.text.trim().isEmpty) {
+        _nombreBController.text = "Jugador 2";
+        actualizarNombre('B', "Jugador 2");
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _nombreAController.dispose();
+    _nombreBController.dispose();
+    _focusA.dispose();
+    _focusB.dispose();
+    super.dispose();
+  }
+
+  // Función auxiliar para borrar si es el nombre por defecto
+  void _limpiarSiEsDefault(TextEditingController controller, String defaultName) {
+    if (controller.text == defaultName) {
+      controller.clear();
+    }
   }
 
   void actualizarPunto(String equipo, int cantidad) {
-    _ref.child('puntos$equipo').runTransaction((mutableData) {
-      int valorActual = (mutableData as int?) ?? 0;
-      int nuevoValor = valorActual + cantidad;
-      return Transaction.success(nuevoValor < 0 ? 0 : nuevoValor);
-    }).then((_) {
-      // Después de actualizar, verificar si se alcanzó la condición ganadora
-      _ref.once().then((event) {
-        if (event.snapshot.value != null) {
-          final data = Map<String, dynamic>.from(event.snapshot.value as Map);
-          final pA = data['puntosA'] ?? 0;
-          final pB = data['puntosB'] ?? 0;
-          
-          // Si A gana el set (>= 11 puntos y diferencia >= 2)
-          if (pA >= 11 && (pA - pB) >= 2) {
-            // Guardar en el histórico
-            List<Map<String, dynamic>> historial = [];
-            if (data['historialSets'] != null) {
-              historial = List<Map<String, dynamic>>.from(
-                (data['historialSets'] as List).map((e) => Map<String, dynamic>.from(e as Map))
-              );
-            }
-            historial.add({
-              'ganador': 'A',
-              'puntosA': pA,
-              'puntosB': pB,
-            });
-            
-            _ref.update({
-              'setsA': (data['setsA'] ?? 0) + 1,
-              'historialSets': historial,
-              'puntosA': 0,
-              'puntosB': 0,
-            });
-          }
-          // Si B gana el set (>= 11 puntos y diferencia >= 2)
-          else if (pB >= 11 && (pB - pA) >= 2) {
-            // Guardar en el histórico
-            List<Map<String, dynamic>> historial = [];
-            if (data['historialSets'] != null) {
-              historial = List<Map<String, dynamic>>.from(
-                (data['historialSets'] as List).map((e) => Map<String, dynamic>.from(e as Map))
-              );
-            }
-            historial.add({
-              'ganador': 'B',
-              'puntosA': pA,
-              'puntosB': pB,
-            });
-            
-            _ref.update({
-              'setsB': (data['setsB'] ?? 0) + 1,
-              'historialSets': historial,
-              'puntosA': 0,
-              'puntosB': 0,
-            });
-          }
-          // Si se resta de 0 y hay un set en el histórico, restaurarlo
-          else if ((equipo == 'A' && pA == 0 && cantidad < 0) ||
-                   (equipo == 'B' && pB == 0 && cantidad < 0)) {
-            List<Map<String, dynamic>> historial = [];
-            if (data['historialSets'] != null) {
-              historial = List<Map<String, dynamic>>.from(
-                (data['historialSets'] as List).map((e) => Map<String, dynamic>.from(e as Map))
-              );
-            }
-            
-            if (historial.isNotEmpty) {
-              final ultimoSet = historial.removeLast();
-              
-              // Restaurar los puntos del último set guardado
-              int puntosARestaurados = ultimoSet['puntosA'] ?? 0;
-              int puntosBRestaurados = ultimoSet['puntosB'] ?? 0;
-              
-              // Determinar quién ganó el set para restar el set correcto
-              if (ultimoSet['ganador'] == 'A') {
-                _ref.update({
-                  'puntosA': puntosARestaurados - 1,
-                  'puntosB': puntosBRestaurados,
-                  'setsA': ((data['setsA'] ?? 0) - 1).clamp(0, 999),
-                  'historialSets': historial,
-                });
-              } else if (ultimoSet['ganador'] == 'B') {
-                _ref.update({
-                  'puntosA': puntosARestaurados,
-                  'puntosB': puntosBRestaurados - 1,
-                  'setsB': ((data['setsB'] ?? 0) - 1).clamp(0, 999),
-                  'historialSets': historial,
-                });
-              }
-            }
-          }
-        }
-      });
+    // 1. EL CANDADO (Para evitar clics dobles)
+    if (_procesando) return;
+    setState(() => _procesando = true);
+
+    // 2. LEEMOS LA SITUACIÓN ACTUAL
+    _ref.once().then((event) {
+      if (event.snapshot.value == null) {
+        setState(() => _procesando = false);
+        return;
+      }
+
+      final data = Map<String, dynamic>.from(event.snapshot.value as Map);
+      int pA = data['puntosA'] ?? 0;
+      int pB = data['puntosB'] ?? 0;
+      int sA = data['setsA'] ?? 0;
+      int sB = data['setsB'] ?? 0;
+      
+      List<Map<String, dynamic>> historial = [];
+      if (data['historialSets'] != null) {
+        historial = List<Map<String, dynamic>>.from(
+          (data['historialSets'] as List).map((e) => Map<String, dynamic>.from(e as Map))
+        );
+      }
+
+      // --- CASO A: DESHACER SET (VOLVER AL PASADO) ---
+      // Si estamos en 0, apretamos RESTAR (-1), y tenemos historial para recuperar...
+      if (cantidad < 0 && ((equipo == 'A' && pA == 0) || (equipo == 'B' && pB == 0))) {
+         
+         if (historial.isNotEmpty) {
+           final ultimoSet = historial.last; // Miramos el último set guardado
+           String ganadorUltimo = ultimoSet['ganador'];
+
+           // REGLA: Solo dejamos deshacer si tocas el botón del que GANÓ ese set.
+           // (Porque fue su punto el que cerró el set)
+           if (equipo == ganadorUltimo) {
+             
+             historial.removeLast(); // 1. Borramos el set del historial
+
+             // 2. Recuperamos los puntos viejos
+             int pARestaurado = ultimoSet['puntosA'];
+             int pBRestaurado = ultimoSet['puntosB'];
+
+             // 3. Le restamos 1 al ganador para volver al momento "Match Point" (ej: de 11 baja a 10)
+             if (ganadorUltimo == 'A') {
+               pARestaurado--; 
+               sA--; // Le quitamos el set a A
+             } else {
+               pBRestaurado--;
+               sB--; // Le quitamos el set a B
+             }
+
+             // 4. Guardamos todo junto
+             _ref.update({
+               'puntosA': pARestaurado,
+               'puntosB': pBRestaurado,
+               'setsA': sA,
+               'setsB': sB,
+               'historialSets': historial
+             }).whenComplete(() => setState(() => _procesando = false));
+             return; // ¡Listo! Terminamos por aquí.
+           }
+         }
+         // Si no se cumple lo anterior, liberamos el candado y no hacemos nada
+         setState(() => _procesando = false);
+         return;
+      }
+
+      // --- CASO B: JUGADA NORMAL (SUMAR O RESTAR PUNTOS) ---
+      
+      // Calculamos cuánto sería el nuevo puntaje
+      int nuevoPA = pA;
+      int nuevoPB = pB;
+
+      if (equipo == 'A') nuevoPA += cantidad;
+      else nuevoPB += cantidad;
+
+      // Protecciones básicas (no bajar de 0)
+      if (nuevoPA < 0) nuevoPA = 0;
+      if (nuevoPB < 0) nuevoPB = 0;
+
+      // CHEQUEO DE VICTORIA (¿Alguien gana el set ahora?)
+      if (nuevoPA >= 11 && (nuevoPA - nuevoPB) >= 2) {
+         // Gana A
+         historial.add({'ganador': 'A', 'puntosA': nuevoPA, 'puntosB': nuevoPB});
+         _ref.update({
+           'puntosA': 0, 'puntosB': 0,
+           'setsA': sA + 1,
+           'historialSets': historial
+         }).whenComplete(() => setState(() => _procesando = false));
+
+      } else if (nuevoPB >= 11 && (nuevoPB - nuevoPA) >= 2) {
+         // Gana B
+         historial.add({'ganador': 'B', 'puntosA': nuevoPA, 'puntosB': nuevoPB});
+         _ref.update({
+           'puntosA': 0, 'puntosB': 0,
+           'setsB': sB + 1,
+           'historialSets': historial
+         }).whenComplete(() => setState(() => _procesando = false));
+
+      } else {
+         // PUNTO NORMAL (Ni set, ni deshacer set)
+         _ref.update({
+           'puntosA': nuevoPA,
+           'puntosB': nuevoPB
+         }).whenComplete(() => setState(() => _procesando = false));
+      }
+
+    }).catchError((e) {
+      // Si falla internet o algo, liberamos el candado
+      setState(() => _procesando = false);
     });
   }
 
@@ -199,11 +260,40 @@ class _PantallaControlState extends State<PantallaControl> {
       'setsB': 0, 
       'historialSets': [], 
       'saqueInicialA': true,
+      'nombreA': "Jugador 1",
+      'nombreB': "Jugador 2",
     });
   }
 
   @override
   Widget build(BuildContext context) {
+    // 1. DETECTOR DE ORIENTACIÓN (SOLO PARA ESTA PANTALLA)
+    final esHorizontal = MediaQuery.of(context).orientation == Orientation.landscape;
+
+    // 2. SI ESTÁ HORIZONTAL -> MOSTRAR AVISO DE BLOQUEO
+    if (esHorizontal) {
+      return Scaffold(
+        backgroundColor: Colors.black,
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: const [
+              Icon(Icons.screen_lock_portrait, size: 80, color: Colors.white),
+              SizedBox(height: 20),
+              Text(
+                "GIRA TU TELÉFONO",
+                style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold),
+              ),
+              SizedBox(height: 10),
+              Text(
+                "El control solo funciona en vertical",
+                style: TextStyle(color: Colors.grey, fontSize: 16),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     return Scaffold(
       appBar: AppBar(
         title: const Text("Control de Mesa"),
@@ -225,8 +315,8 @@ class _PantallaControlState extends State<PantallaControl> {
           // --- 1. RECUPERAR DATOS ---
           int pA = 0, pB = 0, sA = 0, sB = 0;
           bool saqueInicialA = true;
-          String nombreA = "AZUL";
-          String nombreB = "ROJO";
+          String nombreA = "Jugador 1";
+          String nombreB = "Jugador 2";
           List<Map<String, dynamic>> historialSets = []; // Lista para el historial
 
           if (snapshot.hasData && snapshot.data!.snapshot.value != null) {
@@ -271,12 +361,50 @@ class _PantallaControlState extends State<PantallaControl> {
           
           // A. BLOQUE SUPERIOR (Nombre y Saque)
           Widget topAzul = Row(children: [
-             Expanded(child: TextField(controller: _nombreAController, style: const TextStyle(color: Colors.blueAccent), decoration: const InputDecoration(labelText: "Azul", isDense: true), onChanged: (v) => actualizarNombre('A', v))),
+             Expanded(
+               child: TextField(
+                 controller: _nombreAController,
+                 focusNode: _focusA,
+                 style: const TextStyle(color: Colors.blueAccent, fontSize: 18),
+                 cursorColor: Colors.blueAccent,
+                 decoration: const InputDecoration(
+                   isDense: true,
+                   focusedBorder: UnderlineInputBorder(
+                     borderSide: BorderSide(color: Colors.blueAccent, width: 2),
+                   ),
+                   enabledBorder: UnderlineInputBorder(
+                     borderSide: BorderSide(color: Colors.white24),
+                   ),
+                   hintStyle: TextStyle(color: Colors.white24)
+                 ), 
+                 onChanged: (v) => actualizarNombre('A', v),
+                 onTap: () => _limpiarSiEsDefault(_nombreAController, "Jugador 1"),
+               )
+             ),
              const SizedBox(width: 5),
              _BotonSaqueConPelota(seleccionado: saqueInicialA, bloqueado: bloqueado, color: Colors.blue[800]!, onTap: () => cambiarSaqueInicial(true)),
           ]);
           Widget topRojo = Row(children: [
-             Expanded(child: TextField(controller: _nombreBController, style: const TextStyle(color: Colors.redAccent), decoration: const InputDecoration(labelText: "Rojo", isDense: true), onChanged: (v) => actualizarNombre('B', v))),
+             Expanded(
+               child: TextField(
+                 controller: _nombreBController,
+                 focusNode: _focusB,
+                 style: const TextStyle(color: Colors.redAccent, fontSize: 18),
+                 cursorColor: Colors.redAccent,
+                 decoration: const InputDecoration(
+                   isDense: true,
+                   focusedBorder: UnderlineInputBorder(
+                     borderSide: BorderSide(color: Colors.redAccent, width: 2),
+                   ),
+                   enabledBorder: UnderlineInputBorder(
+                     borderSide: BorderSide(color: Colors.white24),
+                   ),
+                   hintStyle: TextStyle(color: Colors.white24)
+                 ), 
+                 onChanged: (v) => actualizarNombre('B', v),
+                 onTap: () => _limpiarSiEsDefault(_nombreBController, "Jugador 2"),
+               )
+             ),
              const SizedBox(width: 5),
              _BotonSaqueConPelota(seleccionado: !saqueInicialA, bloqueado: bloqueado, color: Colors.red[800]!, onTap: () => cambiarSaqueInicial(false)),
           ]);
@@ -297,10 +425,32 @@ class _PantallaControlState extends State<PantallaControl> {
 
           // ELEMENTOS FIJOS
           Widget separadorVS = const Padding(padding: EdgeInsets.symmetric(horizontal: 8.0), child: Text("VS", style: TextStyle(color: Colors.grey, fontSize: 10)));
+          // Determinar dirección visual de la flecha
+          // Si saca A y NO están invertidos (A a la izq) -> Flecha Izquierda
+          // Si saca B y SÍ están invertidos (B a la izq) -> Flecha Izquierda
+          // En cualquier otro caso -> Flecha Derecha
+          bool flechaIzquierda = (saqueParaA == !invertirLados);
+
           Widget indicadorSaque = Container(
-             padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-             decoration: BoxDecoration(color: Colors.grey[900], border: Border.all(color: saqueParaA ? Colors.blueAccent : Colors.redAccent, width: 2), borderRadius: BorderRadius.circular(30)),
-             child: const Text('SACA', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+             width: 65, // ANCHO FIJO: Para que la caja no cambie de tamaño al cambiar el ícono
+             height: 38, // ALTO FIJO
+             alignment: Alignment.center, // Centramos el icono
+             decoration: BoxDecoration(
+               color: Colors.grey[900], 
+               border: Border.all(color: saqueParaA ? Colors.blueAccent : Colors.redAccent, width: 2), 
+               borderRadius: BorderRadius.circular(30)
+             ),
+             child: Icon(
+               flechaIzquierda ? Icons.arrow_back : Icons.arrow_forward,
+               color: Colors.white,
+               size: 26,
+               shadows: const [
+                 Shadow(color: Colors.white, offset: Offset(0.5, 0)),
+                 Shadow(color: Colors.white, offset: Offset(-0.5, 0)),
+                 Shadow(color: Colors.white, offset: Offset(0, 0.5)),
+                 Shadow(color: Colors.white, offset: Offset(0, -0.5)),
+               ],
+             ),
           );
 
           return Column(
