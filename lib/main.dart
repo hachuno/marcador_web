@@ -38,32 +38,155 @@ class MyApp extends StatelessWidget {
   }
 }
 
-// 1. PANTALLA DE SELECCIÓN
-class SeleccionModo extends StatelessWidget {
+// ==========================================
+// 1. PANTALLA DE SELECCIÓN (MODIFICADA)
+// ==========================================
+class SeleccionModo extends StatefulWidget {
   const SeleccionModo({super.key});
+
+  @override
+  State<SeleccionModo> createState() => _SeleccionModoState();
+}
+
+class _SeleccionModoState extends State<SeleccionModo> {
+  final DatabaseReference _ref = FirebaseDatabase.instance.ref("partido");
+  int _setsSeleccionados = 5; // Por defecto a 5 sets
+
+  void _iniciarNuevoPartido() {
+    // Reseteamos todo y guardamos la configuración de sets
+    _ref.update({
+      'puntosA': 0, 'puntosB': 0, 
+      'setsA': 0, 'setsB': 0,
+      'historialSets': [],
+      'saqueInicialA': null,
+      'nombreA': "Jugador 1",
+      'nombreB': "Jugador 2",
+      'maxSets': _setsSeleccionados, // <--- GUARDAMOS LA ELECCIÓN
+    }).then((_) {
+      Navigator.pushNamed(context, '/control');
+    });
+  }
+
+  void _continuarPartido() {
+    // Solo navegamos, no tocamos la configuración
+    Navigator.pushNamed(context, '/control');
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.sports_tennis, size: 80, color: Colors.white),
-            const SizedBox(height: 40),
-            ElevatedButton.icon(
-              icon: const Icon(Icons.phone_iphone),
-              label: const Text("Mesa de Control", style: TextStyle(fontSize: 20)),
-              style: ElevatedButton.styleFrom(padding: const EdgeInsets.all(20)),
-              onPressed: () => Navigator.pushNamed(context, '/control'),
-            ),
-            const SizedBox(height: 20),
-            ElevatedButton.icon(
-              icon: const Icon(Icons.tv),
-              label: const Text("Pantalla de Marcador", style: TextStyle(fontSize: 20)),
-              style: ElevatedButton.styleFrom(padding: const EdgeInsets.all(20)),
-              onPressed: () => Navigator.pushNamed(context, '/tv'),
-            ),
-          ],
+        child: Padding(
+          padding: const EdgeInsets.all(20.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.sports_tennis, size: 80, color: Colors.white),
+              const SizedBox(height: 30),
+              
+              const Text("CONFIGURACIÓN NUEVO JUEGO", style: TextStyle(color: Colors.grey, fontSize: 12, letterSpacing: 1.5)),
+              const SizedBox(height: 10),
+              
+              // --- SELECTOR DE SETS ---
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.grey[900],
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.white24)
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _botonSetOption(3, "Mejor de 3"),
+                    _botonSetOption(5, "Mejor de 5"),
+                  ],
+                ),
+              ),
+              
+              const SizedBox(height: 30),
+
+              // --- BOTÓN NUEVO PARTIDO ---
+              SizedBox(
+                width: double.infinity,
+                height: 55,
+                child: ElevatedButton.icon(
+                  icon: const Icon(Icons.add_circle_outline, color: Colors.white),
+                  label: const Text("INICIAR NUEVO PARTIDO", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue[800],
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  onPressed: _iniciarNuevoPartido,
+                ),
+              ),
+
+              const SizedBox(height: 15),
+
+              // --- BOTÓN CONTINUAR (CON LÓGICA DE BLOQUEO) ---
+              StreamBuilder(
+                stream: _ref.onValue,
+                builder: (context, snapshot) {
+                  bool hayPartidoEnCurso = false;
+                  if (snapshot.hasData && snapshot.data!.snapshot.value != null) {
+                    final data = Map<String, dynamic>.from(snapshot.data!.snapshot.value as Map);
+                    int pA = data['puntosA'] ?? 0;
+                    int pB = data['puntosB'] ?? 0;
+                    int sA = data['setsA'] ?? 0;
+                    int sB = data['setsB'] ?? 0;
+                    // Si hay algún punto o set, hay partido.
+                    if (pA > 0 || pB > 0 || sA > 0 || sB > 0) {
+                      hayPartidoEnCurso = true;
+                    }
+                  }
+
+                  return SizedBox(
+                    width: double.infinity,
+                    height: 55,
+                    child: ElevatedButton.icon(
+                      icon: const Icon(Icons.play_arrow_rounded),
+                      label: const Text("CONTINUAR ANTERIOR", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.green[800],
+                        disabledBackgroundColor: Colors.grey[900], // Color cuando está desactivado
+                        disabledForegroundColor: Colors.grey[700],
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                      // Si no hay partido, el botón es null (deshabilitado)
+                      onPressed: hayPartidoEnCurso ? _continuarPartido : null,
+                    ),
+                  );
+                }
+              ),
+
+              const SizedBox(height: 40),
+              TextButton.icon(
+                icon: const Icon(Icons.tv, color: Colors.white54),
+                label: const Text("Ir a Pantalla TV", style: TextStyle(color: Colors.white54)),
+                onPressed: () => Navigator.pushNamed(context, '/tv'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _botonSetOption(int valor, String texto) {
+    bool seleccionado = _setsSeleccionados == valor;
+    return GestureDetector(
+      onTap: () => setState(() => _setsSeleccionados = valor),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+        decoration: BoxDecoration(
+          color: seleccionado ? Colors.white : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Text(
+          texto, 
+          style: TextStyle(
+            color: seleccionado ? Colors.black : Colors.white54, 
+            fontWeight: FontWeight.bold
+          )
         ),
       ),
     );
@@ -159,21 +282,21 @@ class _PantallaControlState extends State<PantallaControl> {
   }
 
   // ALERTA: PARTIDO TERMINADO
-  void _mostrarAlertaFinPartido(BuildContext context) {
+  void _mostrarAlertaFinPartido(BuildContext context, String ganador) {
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Row(
-          children: const [
-            Icon(Icons.emoji_events_rounded, color: Colors.white, size: 28),
-            SizedBox(width: 15),
+          children: [
+            const Icon(Icons.emoji_events_rounded, color: Colors.white, size: 28),
+            const SizedBox(width: 15),
             Expanded(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text("¡PARTIDO FINALIZADO!", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white)),
-                  Text("Se alcanzó el límite de sets. Usa 'Reset' para jugar de nuevo.", style: TextStyle(fontSize: 13, color: Colors.white70)),
+                  const Text("¡PARTIDO FINALIZADO!", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white)),
+                  Text("Ganador: $ganador. Usa 'Reset' para jugar de nuevo.", style: TextStyle(fontSize: 13, color: Colors.white70)),
                 ],
               ),
             ),
@@ -182,7 +305,6 @@ class _PantallaControlState extends State<PantallaControl> {
         backgroundColor: Colors.green[800],
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-        // Misma altura que la alerta de saque
         margin: EdgeInsets.only(
           bottom: MediaQuery.of(context).size.height - 275, 
           left: 20, 
@@ -194,7 +316,6 @@ class _PantallaControlState extends State<PantallaControl> {
   }
 
   void actualizarPunto(String equipo, int cantidad, bool? saqueLocal) {
-    // 1. CHEQUEO: Falta Saque
     if (cantidad > 0 && saqueLocal == null) {
       _mostrarAlertaSaque(context);
       return; 
@@ -215,11 +336,19 @@ class _PantallaControlState extends State<PantallaControl> {
       int sA = data['setsA'] ?? 0;
       int sB = data['setsB'] ?? 0;
       
-      // CHEQUEO PREVIO: Si ya terminó, no dejar sumar más
-      bool partidoYaTerminado = (sA >= 2 || sB >= 2);
+      // LEER CONFIGURACIÓN DE SETS (Default 5 si no existe)
+      int maxSets = data['maxSets'] ?? 5;
+      
+      // CALCULAR SETS PARA GANAR (Ej: Si es 5, gana con 3. Si es 3, gana con 2)
+      int setsParaGanar = (maxSets / 2).ceil();
+
+      // CHEQUEO PREVIO: Si ya terminó
+      bool partidoYaTerminado = (sA >= setsParaGanar || sB >= setsParaGanar);
+      
       if (cantidad > 0 && partidoYaTerminado) {
+        String nombreGanador = sA > sB ? (data['nombreA'] ?? "Jugador 1") : (data['nombreB'] ?? "Jugador 2");
         setState(() => _procesando = false);
-        _mostrarAlertaFinPartido(context);
+        _mostrarAlertaFinPartido(context, nombreGanador);
         return;
       }
       
@@ -261,37 +390,31 @@ class _PantallaControlState extends State<PantallaControl> {
       if (nuevoPA < 0) nuevoPA = 0;
       if (nuevoPB < 0) nuevoPB = 0;
 
-      // --- LOGICA DE GANAR SET ---
       if (nuevoPA >= 11 && (nuevoPA - nuevoPB) >= 2) {
-         // GANA A
          historial.add({'ganador': 'A', 'puntosA': nuevoPA, 'puntosB': nuevoPB});
          int nuevosSetsA = sA + 1;
          
          _ref.update({ 'puntosA': 0, 'puntosB': 0, 'setsA': nuevosSetsA, 'historialSets': historial
          }).whenComplete(() {
             setState(() => _procesando = false);
-            // CHEQUEO FINALIZACIÓN INMEDIATA (Gana A)
-            if (nuevosSetsA >= 2) {
-              _mostrarAlertaFinPartido(context);
+            if (nuevosSetsA >= setsParaGanar) {
+              _mostrarAlertaFinPartido(context, data['nombreA'] ?? "Jugador 1");
             }
          });
 
       } else if (nuevoPB >= 11 && (nuevoPB - nuevoPA) >= 2) {
-         // GANA B
          historial.add({'ganador': 'B', 'puntosA': nuevoPA, 'puntosB': nuevoPB});
          int nuevosSetsB = sB + 1;
 
          _ref.update({ 'puntosA': 0, 'puntosB': 0, 'setsB': nuevosSetsB, 'historialSets': historial
          }).whenComplete(() {
             setState(() => _procesando = false);
-            // CHEQUEO FINALIZACIÓN INMEDIATA (Gana B)
-            if (nuevosSetsB >= 2) {
-              _mostrarAlertaFinPartido(context);
+            if (nuevosSetsB >= setsParaGanar) {
+              _mostrarAlertaFinPartido(context, data['nombreB'] ?? "Jugador 2");
             }
          });
 
       } else {
-         // PUNTO NORMAL
          _ref.update({ 'puntosA': nuevoPA, 'puntosB': nuevoPB
          }).whenComplete(() => setState(() => _procesando = false));
       }
@@ -315,6 +438,7 @@ class _PantallaControlState extends State<PantallaControl> {
       'historialSets': [], 
       'saqueInicialA': null, 
       'nombreA': "Jugador 1", 'nombreB': "Jugador 2",
+      'maxSets': 5 // Default al resetear desde acá
     });
   }
 
@@ -383,15 +507,12 @@ class _PantallaControlState extends State<PantallaControl> {
           bool safeSaque = saqueInicialA ?? true;
           bool haySaqueDefinido = saqueInicialA != null;
 
-          // Lógica de turno de saque
           bool saqueInicialEnEsteSet = esSetImpar ? safeSaque : !safeSaque;
           bool turnoBaseParaA;
           if (pA >= 10 && pB >= 10) turnoBaseParaA = (totalPuntos % 2 == 0);
           else turnoBaseParaA = ((totalPuntos ~/ 2) % 2 == 0);
           
           bool saqueParaA = saqueInicialEnEsteSet ? turnoBaseParaA : !turnoBaseParaA;
-          
-          // LÓGICA DE INVERSIÓN
           bool invertirLados = (sA + sB) % 2 != 0;
 
           // WIDGETS
@@ -434,10 +555,8 @@ class _PantallaControlState extends State<PantallaControl> {
 
           return Column(
             children: [
-              // 1. ZONA NOMBRES Y SAQUE
               Padding(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5), child: Row(children: [Expanded(child: invertirLados ? topRojo : topAzul), separadorVS, Expanded(child: invertirLados ? topAzul : topRojo)])),
               
-              // 2. ZONA TABLA DE RESULTADOS
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
                 child: _TablaPuntuacion(
@@ -449,7 +568,6 @@ class _PantallaControlState extends State<PantallaControl> {
                 ),
               ),
 
-              // 3. ZONA MARCADOR CENTRAL
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 10),
                 child: Row(
@@ -461,7 +579,6 @@ class _PantallaControlState extends State<PantallaControl> {
                 )
               ),
               
-              // 4. ZONA BOTONES
               Expanded(child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: invertirLados ? [botonRojo, botonAzul] : [botonAzul, botonRojo])),
             ],
           );
