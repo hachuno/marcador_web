@@ -124,17 +124,14 @@ class _PantallaControlState extends State<PantallaControl> {
     }
   }
 
-  // --- ALERTA VISUAL MEJORADA (SOLO SNACKBAR) ---
+  // ALERTA: FALTA SAQUE
   void _mostrarAlertaSaque(BuildContext context) {
-    // 1. Limpiamos cualquier mensaje anterior para que no se acumulen
     ScaffoldMessenger.of(context).clearSnackBars();
-
-    // 2. Mostramos el nuevo mensaje estilizado
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Row(
           children: const [
-            Icon(Icons.pan_tool_rounded, color: Colors.white, size: 26), // Icono de Mano/Alto
+            Icon(Icons.pan_tool_rounded, color: Colors.white, size: 26),
             SizedBox(width: 15),
             Expanded(
               child: Column(
@@ -142,32 +139,65 @@ class _PantallaControlState extends State<PantallaControl> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text("¡FALTA EL SAQUE!", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white)),
-                  Text("Toca el recuadro a la derecha del Jugador que iniciara sacando.", style: TextStyle(fontSize: 13, color: Colors.white70)),
+                  Text("Toca el recuadro a la derecha del Jugador que inicia sacando.", style: TextStyle(fontSize: 13, color: Colors.white70)),
                 ],
               ),
             ),
           ],
         ),
-        backgroundColor: Colors.red[900], // Rojo oscuro elegante
-        behavior: SnackBarBehavior.floating, // Flota sobre la interfaz
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)), // Bordes redondeados
+        backgroundColor: Colors.red[900],
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
         margin: EdgeInsets.only(
-          bottom: MediaQuery.of(context).size.height / 2 - 20, // TRUCO: Lo ponemos EN EL MEDIO de la pantalla
+          bottom: MediaQuery.of(context).size.height - 275, 
           left: 20, 
           right: 20
         ),
-        duration: const Duration(milliseconds: 2500), // Dura 2.5 segundos
+        duration: const Duration(milliseconds: 2500),
       )
     );
   }
 
-  // --- LOGICA DE PUNTOS ---
+  // ALERTA: PARTIDO TERMINADO
+  void _mostrarAlertaFinPartido(BuildContext context) {
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: const [
+            Icon(Icons.emoji_events_rounded, color: Colors.white, size: 28),
+            SizedBox(width: 15),
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text("¡PARTIDO FINALIZADO!", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white)),
+                  Text("Se alcanzó el límite de sets. Usa 'Reset' para jugar de nuevo.", style: TextStyle(fontSize: 13, color: Colors.white70)),
+                ],
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: Colors.green[800],
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+        // Misma altura que la alerta de saque
+        margin: EdgeInsets.only(
+          bottom: MediaQuery.of(context).size.height - 275, 
+          left: 20, 
+          right: 20
+        ),
+        duration: const Duration(milliseconds: 3000),
+      )
+    );
+  }
+
   void actualizarPunto(String equipo, int cantidad, bool? saqueLocal) {
-    
-    // 1. CHEQUEO INSTANTÁNEO (SIN INTERNET)
+    // 1. CHEQUEO: Falta Saque
     if (cantidad > 0 && saqueLocal == null) {
       _mostrarAlertaSaque(context);
-      return; // Stop.
+      return; 
     }
 
     if (_procesando) return;
@@ -184,6 +214,14 @@ class _PantallaControlState extends State<PantallaControl> {
       int pB = data['puntosB'] ?? 0;
       int sA = data['setsA'] ?? 0;
       int sB = data['setsB'] ?? 0;
+      
+      // CHEQUEO PREVIO: Si ya terminó, no dejar sumar más
+      bool partidoYaTerminado = (sA >= 2 || sB >= 2);
+      if (cantidad > 0 && partidoYaTerminado) {
+        setState(() => _procesando = false);
+        _mostrarAlertaFinPartido(context);
+        return;
+      }
       
       List<Map<String, dynamic>> historial = [];
       if (data['historialSets'] != null) {
@@ -216,22 +254,44 @@ class _PantallaControlState extends State<PantallaControl> {
          return;
       }
 
-      // CASO B: NORMAL
+      // CASO B: JUGADA NORMAL
       int nuevoPA = pA;
       int nuevoPB = pB;
       if (equipo == 'A') nuevoPA += cantidad; else nuevoPB += cantidad;
       if (nuevoPA < 0) nuevoPA = 0;
       if (nuevoPB < 0) nuevoPB = 0;
 
+      // --- LOGICA DE GANAR SET ---
       if (nuevoPA >= 11 && (nuevoPA - nuevoPB) >= 2) {
+         // GANA A
          historial.add({'ganador': 'A', 'puntosA': nuevoPA, 'puntosB': nuevoPB});
-         _ref.update({ 'puntosA': 0, 'puntosB': 0, 'setsA': sA + 1, 'historialSets': historial
-         }).whenComplete(() => setState(() => _procesando = false));
+         int nuevosSetsA = sA + 1;
+         
+         _ref.update({ 'puntosA': 0, 'puntosB': 0, 'setsA': nuevosSetsA, 'historialSets': historial
+         }).whenComplete(() {
+            setState(() => _procesando = false);
+            // CHEQUEO FINALIZACIÓN INMEDIATA (Gana A)
+            if (nuevosSetsA >= 2) {
+              _mostrarAlertaFinPartido(context);
+            }
+         });
+
       } else if (nuevoPB >= 11 && (nuevoPB - nuevoPA) >= 2) {
+         // GANA B
          historial.add({'ganador': 'B', 'puntosA': nuevoPA, 'puntosB': nuevoPB});
-         _ref.update({ 'puntosA': 0, 'puntosB': 0, 'setsB': sB + 1, 'historialSets': historial
-         }).whenComplete(() => setState(() => _procesando = false));
+         int nuevosSetsB = sB + 1;
+
+         _ref.update({ 'puntosA': 0, 'puntosB': 0, 'setsB': nuevosSetsB, 'historialSets': historial
+         }).whenComplete(() {
+            setState(() => _procesando = false);
+            // CHEQUEO FINALIZACIÓN INMEDIATA (Gana B)
+            if (nuevosSetsB >= 2) {
+              _mostrarAlertaFinPartido(context);
+            }
+         });
+
       } else {
+         // PUNTO NORMAL
          _ref.update({ 'puntosA': nuevoPA, 'puntosB': nuevoPB
          }).whenComplete(() => setState(() => _procesando = false));
       }
@@ -269,12 +329,12 @@ class _PantallaControlState extends State<PantallaControl> {
       );
     }
     return Scaffold(
+      resizeToAvoidBottomInset: false,
       appBar: AppBar(
         title: const Text("Control de Mesa"), 
         actions: [
           Padding(
             padding: const EdgeInsets.only(right: 10),
-            // CORRECCIÓN CONSOLA: Tamaño fijo
             child: SizedBox(width: 40, height: 40, child: GoogleCastButton()),
           ),
           IconButton(icon: const Icon(Icons.refresh, color: Colors.white), onPressed: reset)
@@ -323,12 +383,15 @@ class _PantallaControlState extends State<PantallaControl> {
           bool safeSaque = saqueInicialA ?? true;
           bool haySaqueDefinido = saqueInicialA != null;
 
+          // Lógica de turno de saque
           bool saqueInicialEnEsteSet = esSetImpar ? safeSaque : !safeSaque;
           bool turnoBaseParaA;
           if (pA >= 10 && pB >= 10) turnoBaseParaA = (totalPuntos % 2 == 0);
           else turnoBaseParaA = ((totalPuntos ~/ 2) % 2 == 0);
           
           bool saqueParaA = saqueInicialEnEsteSet ? turnoBaseParaA : !turnoBaseParaA;
+          
+          // LÓGICA DE INVERSIÓN
           bool invertirLados = (sA + sB) % 2 != 0;
 
           // WIDGETS
@@ -343,10 +406,9 @@ class _PantallaControlState extends State<PantallaControl> {
              _BotonSaqueConPelota(seleccionado: saqueInicialA == false, bloqueado: bloqueado, color: Colors.red[800]!, onTap: () => cambiarSaqueInicial(false)),
           ]);
 
-          Widget scoreAzul = Column(children: [Text("$pA", style: const TextStyle(color: Colors.white, fontSize: 60, height: 1, fontWeight: FontWeight.bold)), Text("SETS: $sA", style: const TextStyle(color: Colors.blueAccent, fontSize: 20, fontWeight: FontWeight.bold))]);
-          Widget scoreRojo = Column(children: [Text("$pB", style: const TextStyle(color: Colors.white, fontSize: 60, height: 1, fontWeight: FontWeight.bold)), Text("SETS: $sB", style: const TextStyle(color: Colors.redAccent, fontSize: 20, fontWeight: FontWeight.bold))]);
+          Widget scoreAzul = Column(children: [Text("$pA", style: const TextStyle(color: Colors.white, fontSize: 80, height: 1, fontWeight: FontWeight.bold))]);
+          Widget scoreRojo = Column(children: [Text("$pB", style: const TextStyle(color: Colors.white, fontSize: 80, height: 1, fontWeight: FontWeight.bold))]);
 
-          // PASAMOS EL ESTADO DE SAQUE
           Widget botonAzul = _BotonJugador(
              color: Colors.blue[900]!, label: "AZUL", 
              onSumar: () => actualizarPunto('A', 1, saqueInicialA), 
@@ -372,27 +434,184 @@ class _PantallaControlState extends State<PantallaControl> {
 
           return Column(
             children: [
+              // 1. ZONA NOMBRES Y SAQUE
               Padding(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5), child: Row(children: [Expanded(child: invertirLados ? topRojo : topAzul), separadorVS, Expanded(child: invertirLados ? topAzul : topRojo)])),
-              Padding(padding: const EdgeInsets.all(8.0), child: Container(
-                  height: 82, width: double.infinity, padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(color: Colors.grey[900], border: Border.all(color: Colors.white24, width: 1), borderRadius: BorderRadius.circular(8)),
-                  child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                      if (historialSets.isEmpty) const Center(child: Text("Sin sets jugados", style: TextStyle(color: Colors.white38, fontSize: 14)))
-                      else Wrap(alignment: WrapAlignment.center, spacing: 5, runSpacing: 5, children: historialSets.asMap().entries.map((entry) {
-                            int index = entry.key + 1; Map<String, dynamic> set = entry.value;
-                            int pA_set = set['puntosA'] ?? 0; int pB_set = set['puntosB'] ?? 0; bool ganaA = set['ganador'] == 'A';
-                            String res = invertirLados ? "$pB_set-$pA_set" : "$pA_set-$pB_set";
-                            return Container(width: 90, padding: const EdgeInsets.symmetric(vertical: 5), decoration: BoxDecoration(color: ganaA ? Colors.blue[900] : Colors.red[900], borderRadius: BorderRadius.circular(6), border: Border.all(color: ganaA ? Colors.blueAccent : Colors.redAccent, width: 1)), child: Text("Set $index: $res", textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600)));
-                          }).toList()),
-                    ],
-                  ),
+              
+              // 2. ZONA TABLA DE RESULTADOS
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
+                child: _TablaPuntuacion(
+                  nombreA: nombreA,
+                  nombreB: nombreB,
+                  setsA: sA,
+                  setsB: sB,
+                  historial: historialSets,
                 ),
               ),
-              Padding(padding: const EdgeInsets.symmetric(vertical: 10), child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [invertirLados ? scoreRojo : scoreAzul, indicadorSaque, invertirLados ? scoreAzul : scoreRojo])),
+
+              // 3. ZONA MARCADOR CENTRAL
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                child: Row(
+                  children: [
+                    Expanded(child: Center(child: invertirLados ? scoreRojo : scoreAzul)),
+                    indicadorSaque,
+                    Expanded(child: Center(child: invertirLados ? scoreAzul : scoreRojo)),
+                  ],
+                )
+              ),
+              
+              // 4. ZONA BOTONES
               Expanded(child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: invertirLados ? [botonRojo, botonAzul] : [botonAzul, botonRojo])),
             ],
           );
         }
+      ),
+    );
+  }
+}
+
+// === WIDGETS AUXILIARES ===
+
+class _TablaPuntuacion extends StatelessWidget {
+  final String nombreA;
+  final String nombreB;
+  final int setsA;
+  final int setsB;
+  final List<Map<String, dynamic>> historial;
+
+  const _TablaPuntuacion({
+    required this.nombreA,
+    required this.nombreB,
+    required this.setsA,
+    required this.setsB,
+    required this.historial,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.grey[900],
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.white24),
+      ),
+      child: Column(
+        children: [
+          _FilaJugador(
+            nombre: nombreA,
+            esJugadorA: true,
+            historial: historial,
+            totalSets: setsA,
+            colorEquipo: Colors.blueAccent, 
+            colorFondoTotal: Colors.blue[900]!,
+            mostrarBordeInferior: true,
+          ),
+          _FilaJugador(
+            nombre: nombreB,
+            esJugadorA: false,
+            historial: historial,
+            totalSets: setsB,
+            colorEquipo: Colors.redAccent,
+            colorFondoTotal: Colors.red[900]!,
+            mostrarBordeInferior: false,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FilaJugador extends StatelessWidget {
+  final String nombre;
+  final bool esJugadorA;
+  final List<Map<String, dynamic>> historial;
+  final int totalSets;
+  final Color colorEquipo;
+  final Color colorFondoTotal;
+  final bool mostrarBordeInferior;
+
+  const _FilaJugador({
+    required this.nombre,
+    required this.esJugadorA,
+    required this.historial,
+    required this.totalSets,
+    required this.colorEquipo,
+    required this.colorFondoTotal,
+    required this.mostrarBordeInferior,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    List<Widget> celdasSets = List.generate(5, (index) {
+      String textoPuntos = "";
+      Color colorFondo = Colors.transparent;
+      Color colorTexto = Colors.white54;
+
+      if (index < historial.length) {
+        final set = historial[index];
+        final pA = set['puntosA'];
+        final pB = set['puntosB'];
+        final ganador = set['ganador'];
+
+        int puntosMios = esJugadorA ? pA : pB;
+        bool ganeEsteSet = (esJugadorA && ganador == 'A') || (!esJugadorA && ganador == 'B');
+
+        textoPuntos = puntosMios.toString();
+        
+        if (ganeEsteSet) {
+          colorFondo = esJugadorA ? Colors.blue[900]!.withOpacity(0.5) : Colors.red[900]!.withOpacity(0.5);
+          colorTexto = Colors.white; 
+        } else {
+           colorTexto = Colors.white38; 
+        }
+      }
+
+      return Expanded(
+        flex: 1, 
+        child: Container(
+          height: 35,
+          decoration: BoxDecoration(
+             color: colorFondo,
+             border: const Border(left: BorderSide(color: Colors.white10)),
+          ),
+          alignment: Alignment.center,
+          child: Text(textoPuntos, style: TextStyle(color: colorTexto, fontWeight: FontWeight.bold)),
+        ),
+      );
+    });
+
+    return Container(
+      decoration: BoxDecoration(
+        border: mostrarBordeInferior ? const Border(bottom: BorderSide(color: Colors.white24)) : null,
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            flex: 4, 
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8.0),
+              child: Text(
+                nombre.toUpperCase(),
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ),
+          ...celdasSets,
+          Expanded(
+            flex: 2,
+            child: Container(
+              height: 35,
+              color: colorFondoTotal,
+              alignment: Alignment.center,
+              child: Text(
+                "$totalSets",
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

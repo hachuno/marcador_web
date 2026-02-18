@@ -1,4 +1,5 @@
 # Script para automatizar build y deploy de Flutter a Firebase
+clear
 
 Write-Host "================================" -ForegroundColor Cyan
 Write-Host "BUILD & DEPLOY - Flutter Web" -ForegroundColor Cyan
