@@ -2,15 +2,20 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
+import 'dart:math'; 
 import 'google_cast_button.dart';
-
 import 'firebase_options.dart';
+
+// Importamos tu diseño visual
+import 'tv_scoreboard.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
+    DeviceOrientation.landscapeLeft,
+    DeviceOrientation.landscapeRight,
   ]);
 
   await Firebase.initializeApp(options: firebaseOptions);
@@ -22,24 +27,79 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Marcador Pro',
+      title: 'Marcador Pro Torneo',
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: Colors.black,
         colorScheme: const ColorScheme.dark(primary: Colors.blueAccent),
+        dialogTheme: DialogThemeData(
+          backgroundColor: Colors.grey[900],
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        ),
       ),
       initialRoute: '/',
+      onGenerateRoute: (settings) {
+        if (settings.name == '/control') {
+          final args = settings.arguments as Map<String, dynamic>;
+          return MaterialPageRoute(
+            builder: (context) => PantallaControl(firebasePath: args['path']),
+          );
+        }
+        if (settings.name == '/tv_torneo') {
+          final args = settings.arguments as Map<String, dynamic>;
+          return MaterialPageRoute(
+            builder: (context) => PantallaTVTorneo(
+              clubKey: args['clubKey'], 
+              mesasCount: args['mesas'],
+            ),
+          );
+        }
+        return null;
+      },
       routes: {
         '/': (context) => const SeleccionModo(),
-        '/control': (context) => const PantallaControl(),
-        '/tv': (context) => const PantallaTV(),
       },
     );
   }
 }
 
 // ==========================================
-// 1. PANTALLA DE SELECCIÓN (MODIFICADA)
+// UTILIDADES
+// ==========================================
+class PasswordGenerator {
+  static const List<String> palabras = [
+    "perro", "gatos", "tigre", "papel", "libro", "playa", "campo", "fuego",
+    "audio", "video", "silla", "mesas", "lapiz", "raton", "boton", "gafas",
+    "cielo", "nubes", "plato", "virus", "reloj", "luces", "pared", "suelo",
+    "pasto", "arbol", "fruta", "limon", "melon", "barco", "avion", "coche",
+    "rueda", "motor", "golpe", "salto", "correr", "jugar", "ganar", "punto"
+  ];
+
+  static String generar() {
+    final random = Random();
+    String p1 = palabras[random.nextInt(palabras.length)];
+    String p2 = palabras[random.nextInt(palabras.length)];
+    return "$p1.$p2";
+  }
+}
+
+// Formateador para forzar mayúsculas visualmente mientras se escribe
+class UpperCaseTextFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(TextEditingValue oldValue, TextEditingValue newValue) {
+    return TextEditingValue(
+      text: newValue.text.toUpperCase(),
+      selection: newValue.selection,
+    );
+  }
+}
+
+String sanitizeClubKey(String input) {
+  return input.trim().toUpperCase().replaceAll(RegExp(r'[.#$\[\]]'), '');
+}
+
+// ==========================================
+// 1. PANTALLA DE SELECCIÓN (MENU PRINCIPAL)
 // ==========================================
 class SeleccionModo extends StatefulWidget {
   const SeleccionModo({super.key});
@@ -49,171 +109,560 @@ class SeleccionModo extends StatefulWidget {
 }
 
 class _SeleccionModoState extends State<SeleccionModo> {
-  final DatabaseReference _ref = FirebaseDatabase.instance.ref("partido");
-  int _setsSeleccionados = 5; // Por defecto a 5 sets
+  final TextEditingController _clubController = TextEditingController();
+  final TextEditingController _passwordInputController = TextEditingController();
+  
+  // Lista de clubes cargados desde Firebase para los dropdowns
+  List<Map<String, String>> _clubesDisponibles = [];
+  bool _cargandoClubes = false;
 
-  void _iniciarNuevoPartido() {
-    // Reseteamos todo y guardamos la configuración de sets
-    _ref.update({
-      'puntosA': 0, 'puntosB': 0, 
-      'setsA': 0, 'setsB': 0,
-      'historialSets': [],
-      'saqueInicialA': null,
-      'nombreA': "Jugador 1",
-      'nombreB': "Jugador 2",
-      'maxSets': _setsSeleccionados, // <--- GUARDAMOS LA ELECCIÓN
-    }).then((_) {
-      Navigator.pushNamed(context, '/control');
-    });
+  int _mesasTorneoSeleccionadas = 6; // DEFAULT 6
+
+  @override
+  void dispose() {
+    _clubController.dispose();
+    _passwordInputController.dispose();
+    super.dispose();
   }
 
-  void _continuarPartido() {
-    // Solo navegamos, no tocamos la configuración
-    Navigator.pushNamed(context, '/control');
+  // Método para buscar clubes existentes en la base de datos
+  Future<void> _cargarClubesFromFirebase() async {
+    setState(() => _cargandoClubes = true);
+    _clubesDisponibles.clear();
+    try {
+      final snapshot = await FirebaseDatabase.instance.ref("torneos").get();
+      if (snapshot.exists) {
+        final data = Map<String, dynamic>.from(snapshot.value as Map);
+        data.forEach((key, value) {
+          if (value['config'] != null) {
+            _clubesDisponibles.add({
+              'key': key, // ID interno (ej: CLUBTENIS)
+              'nombre': value['config']['nombre'].toString() // Nombre bonito (ej: CLUB TENIS)
+            });
+          }
+        });
+      }
+    } catch (e) {
+      debugPrint("Error cargando clubes: $e");
+    } finally {
+      setState(() => _cargandoClubes = false);
+    }
+  }
+
+  // --- LÓGICA: INICIAR TORNEO (CREAR) ---
+  void _mostrarDialogoIniciarTorneo() {
+    _clubController.clear();
+    // Restaurar default 6 al abrir
+    _mesasTorneoSeleccionadas = 6; 
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setStateDialog) {
+          bool cargando = false;
+
+          return AlertDialog(
+            title: const Text("Crear Nuevo Torneo"),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: _clubController,
+                  textCapitalization: TextCapitalization.characters,
+                  // Forzamos mayúsculas al escribir
+                  inputFormatters: [UpperCaseTextFormatter()],
+                  decoration: const InputDecoration(
+                    labelText: "Nombre del Club",
+                    hintText: "Ej: SPIN TENIS"
+                  ),
+                ),
+                const SizedBox(height: 20),
+                const Text("Cantidad de Mesas:"),
+                const SizedBox(height: 10),
+                if (cargando) 
+                  const Padding(padding: EdgeInsets.all(20), child: CircularProgressIndicator())
+                else
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [2, 4, 6, 8].map((e) {
+                      return ChoiceChip(
+                        label: Text(e.toString()),
+                        selected: _mesasTorneoSeleccionadas == e,
+                        onSelected: (bool selected) {
+                          setStateDialog(() => _mesasTorneoSeleccionadas = e);
+                        },
+                      );
+                    }).toList(),
+                  ),
+              ],
+            ),
+            actions: [
+              if (!cargando) TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancelar")),
+              if (!cargando)
+                ElevatedButton(
+                  onPressed: () async {
+                    if (_clubController.text.isNotEmpty) {
+                      setStateDialog(() => cargando = true);
+                      try {
+                        String passwordGenerada = await _crearEstructuraTorneo(
+                          _clubController.text, 
+                          _mesasTorneoSeleccionadas
+                        );
+                        
+                        if (context.mounted) {
+                          Navigator.pop(context);
+                          _mostrarDialogoPassword(passwordGenerada);
+                          // Recargamos la lista de clubes para que aparezca en las otras opciones
+                          _cargarClubesFromFirebase(); 
+                        }
+                      } catch (e) {
+                        setStateDialog(() => cargando = false);
+                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red));
+                      }
+                    }
+                  },
+                  child: const Text(
+                    "CREAR TORNEO", 
+                    style: TextStyle(color: Colors.white70)
+                  ),                  
+                ),
+            ],
+          );
+        }
+      ),
+    );
+  }
+
+  void _mostrarDialogoPassword(String password) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("¡Torneo Creado!", style: TextStyle(color: Colors.green)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text("Guarda esta contraseña para iniciar los partidos:"),
+            const SizedBox(height: 20),
+            Container(
+              padding: const EdgeInsets.all(15),
+              decoration: BoxDecoration(
+                color: Colors.white12,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.blueAccent)
+              ),
+              child: SelectableText(
+                password,
+                style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, letterSpacing: 1.5),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          ElevatedButton(onPressed: () => Navigator.pop(context), child: const Text("ENTENDIDO"))
+        ],
+      ),
+    );
+  }
+
+  Future<String> _crearEstructuraTorneo(String clubInput, int cantidadMesas) async {
+    // 1. FORZAR MAYÚSCULAS Y LIMPIAR
+    String nombreDisplay = clubInput.trim().toUpperCase();
+    String clubKey = sanitizeClubKey(clubInput);
+    
+    final ref = FirebaseDatabase.instance.ref("torneos/$clubKey");
+    
+    // 2. VALIDAR EXISTENCIA
+    final snapshot = await ref.get();
+    if (snapshot.exists) {
+      throw "El club '$nombreDisplay' ya existe. Usa otro nombre.";
+    }
+
+    // 3. GENERAR PASSWORD
+    String password = PasswordGenerator.generar();
+
+    // 4. GUARDAR ESTRUCTURA
+    await ref.update({
+      'config': {
+        'nombre': nombreDisplay,
+        'cantidadMesas': cantidadMesas,
+        'password': password,
+        'fechaCreacion': ServerValue.timestamp,
+      }
+    });
+
+    for (int i = 1; i <= cantidadMesas; i++) {
+      await ref.child("mesa_$i").set({
+        'puntosA': 0, 'puntosB': 0,
+        'setsA': 0, 'setsB': 0,
+        'nombreA': "JUGADOR 1", 'nombreB': "JUGADOR 2",
+        'historialSets': [],
+        'saqueInicialA': null,
+        'maxSets': 3, // Default sets base
+      });
+    }
+
+    return password;
+  }
+
+  // --- LÓGICA: CONTROLAR UN PARTIDO (LOGIN + SETS) ---
+  void _mostrarDialogoControlarPartido() async {
+    // Cargamos clubes antes de mostrar el diálogo
+    await _cargarClubesFromFirebase();
+
+    _passwordInputController.clear();
+    
+    // Variables de estado
+    String? selectedClubKey; // El ID del club seleccionado
+    bool loadingConfig = false;
+    
+    // Datos del club seleccionado
+    String realPassword = "";
+    int totalMesas = 0;
+    
+    int mesaSeleccionada = 1;
+    int setsSeleccionados = 3; // DEFAULT 3
+
+    if (!mounted) return;
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setStateDialog) {
+          
+          // Función para cargar la config específica del club seleccionado
+          void fetchClubConfig(String key) async {
+             setStateDialog(() => loadingConfig = true);
+             try {
+                final ref = FirebaseDatabase.instance.ref("torneos/$key/config");
+                final snap = await ref.get();
+                if (snap.exists) {
+                   final data = Map<String, dynamic>.from(snap.value as Map);
+                   setStateDialog(() {
+                      realPassword = data['password'].toString();
+                      totalMesas = int.parse(data['cantidadMesas'].toString());
+                      loadingConfig = false;
+                      mesaSeleccionada = 1; // Reset mesa al cambiar club
+                   });
+                }
+             } catch (e) {
+                setStateDialog(() => loadingConfig = false);
+             }
+          }
+
+          return AlertDialog(
+            title: const Text("Iniciar Partido"),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // PASO 1: Selector de Club
+                  const Text("Selecciona el Club:", style: TextStyle(color: Colors.white70)),
+                  const SizedBox(height: 5),
+                  if (_cargandoClubes)
+                    const Center(child: Padding(padding: EdgeInsets.all(8.0), child: CircularProgressIndicator()))
+                  else if (_clubesDisponibles.isEmpty)
+                     const Padding(
+                       padding: EdgeInsets.all(8.0),
+                       child: Text("No hay torneos creados.", style: TextStyle(color: Colors.orange)),
+                     )
+                  else
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(8)),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          value: selectedClubKey,
+                          hint: const Text("Elige un club..."),
+                          isExpanded: true,
+                          dropdownColor: Colors.grey[850],
+                          items: _clubesDisponibles.map((club) {
+                            return DropdownMenuItem<String>(
+                              value: club['key'],
+                              child: Text(club['nombre']!),
+                            );
+                          }).toList(),
+                          onChanged: (val) {
+                            if (val != null) {
+                              setStateDialog(() => selectedClubKey = val);
+                              fetchClubConfig(val);
+                            }
+                          },
+                        ),
+                      ),
+                    ),
+
+                  // Si se seleccionó club y está cargando config
+                  if (loadingConfig)
+                     const Padding(padding: EdgeInsets.only(top: 20), child: Center(child: CircularProgressIndicator())),
+
+                  // PASO 2: Controles (Solo si ya cargó la config del club)
+                  if (selectedClubKey != null && !loadingConfig && totalMesas > 0) ...[
+                    const SizedBox(height: 20),
+                    const Divider(color: Colors.white24),
+                    const SizedBox(height: 10),
+
+                    // Password (YA NO ESTÁ OCULTO)
+                    TextField(
+                      controller: _passwordInputController,
+                      obscureText: false, // NO OCULTAR
+                      decoration: const InputDecoration(
+                        labelText: "Contraseña del Torneo",
+                        prefixIcon: Icon(Icons.lock_open), // Icono abierto para indicar visibilidad
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+
+                    // Selección de Mesa
+                    const Text("Seleccionar Mesa:", style: TextStyle(color: Colors.white70)),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      decoration: BoxDecoration(
+                        color: Colors.white10,
+                        borderRadius: BorderRadius.circular(8)
+                      ),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<int>(
+                          value: mesaSeleccionada,
+                          isExpanded: true,
+                          dropdownColor: Colors.grey[850],
+                          items: List.generate(totalMesas, (index) {
+                            int num = index + 1;
+                            return DropdownMenuItem(value: num, child: Text("Mesa $num"));
+                          }), 
+                          onChanged: (val) => setStateDialog(() => mesaSeleccionada = val!)
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 20),
+                    // Selección de Sets (3 o 5)
+                    const Text("Modo de Juego:", style: TextStyle(color: Colors.white70)),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: ChoiceChip(
+                            label: const Center(child: Text("Mejor de 3")),
+                            selected: setsSeleccionados == 3,
+                            onSelected: (s) => setStateDialog(() => setsSeleccionados = 3),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: ChoiceChip(
+                            label: const Center(child: Text("Mejor de 5")),
+                            selected: setsSeleccionados == 5,
+                            onSelected: (s) => setStateDialog(() => setsSeleccionados = 5),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancelar")),
+              // Solo habilitar botón si hay club seleccionado y hay mesas cargadas
+              if (selectedClubKey != null && totalMesas > 0)
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green[800],
+                    foregroundColor: Colors.white70,
+                  ),
+                  onPressed: () async {
+                    // VALIDAR PASSWORD
+                    if (_passwordInputController.text.trim() != realPassword) {
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Contraseña incorrecta"), backgroundColor: Colors.red));
+                      return;
+                    }
+
+                    String path = "torneos/$selectedClubKey/mesa_$mesaSeleccionada";
+                    
+                    // Actualizamos maxSets
+                    await FirebaseDatabase.instance.ref(path).update({
+                      "maxSets": setsSeleccionados
+                    });
+
+                    if (context.mounted) {
+                      Navigator.pop(context);
+                      Navigator.pushNamed(context, '/control', arguments: {'path': path});
+                    }
+                  },
+                  child: const Text("INICIAR PARTIDO"),
+                ),
+            ],
+          );
+        }
+      ),
+    );
+  }
+
+  // --- LÓGICA: VER RESULTADOS ONLINE (TV) ---
+  void _mostrarDialogoTVTorneo() async {
+    await _cargarClubesFromFirebase(); // Cargar lista fresca
+
+    String? selectedClubKey;
+    bool buscando = false;
+
+    if (!mounted) return;
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setStateDialog) {
+          return AlertDialog(
+            title: const Text("Pantalla TV - Torneo"),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text("Selecciona el Club:", style: TextStyle(color: Colors.white70)),
+                const SizedBox(height: 10),
+                
+                 if (_cargandoClubes)
+                    const Center(child: Padding(padding: EdgeInsets.all(8.0), child: CircularProgressIndicator()))
+                  else if (_clubesDisponibles.isEmpty)
+                     const Padding(
+                       padding: EdgeInsets.all(8.0),
+                       child: Text("No hay torneos disponibles.", style: TextStyle(color: Colors.orange)),
+                     )
+                  else
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(8)),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          value: selectedClubKey,
+                          hint: const Text("Elige un club..."),
+                          isExpanded: true,
+                          dropdownColor: Colors.grey[850],
+                          items: _clubesDisponibles.map((club) {
+                            return DropdownMenuItem<String>(
+                              value: club['key'],
+                              child: Text(club['nombre']!),
+                            );
+                          }).toList(),
+                          onChanged: (val) {
+                            setStateDialog(() => selectedClubKey = val);
+                          },
+                        ),
+                      ),
+                    ),
+
+                const SizedBox(height: 15),
+                if (buscando) const Center(child: CircularProgressIndicator()),
+              ],
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancelar")),
+              if (!buscando && selectedClubKey != null)
+                ElevatedButton(
+                  onPressed: () {
+                    setStateDialog(() => buscando = true);
+                    
+                    // Consultamos cantidad de mesas para ese club
+                    FirebaseDatabase.instance.ref("torneos/$selectedClubKey/config/cantidadMesas").get().then((snapshot) {
+                      if (snapshot.exists && snapshot.value != null) {
+                        int mesas = int.tryParse(snapshot.value.toString()) ?? 6;
+                        if (context.mounted) {
+                          Navigator.pop(context);
+                          Navigator.pushNamed(context, '/tv_torneo', arguments: {
+                            'clubKey': selectedClubKey,
+                            'mesas': mesas
+                          });
+                        }
+                      }
+                    }).catchError((e) {
+                       setStateDialog(() => buscando = false);
+                    });
+                  },
+                  child: const Text(
+                    "VER PANTALLA", 
+                    style: TextStyle(color: Colors.white70)
+                  ),
+                ),
+            ],
+          );
+        }
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(20.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.sports_tennis, size: 80, color: Colors.white),
-              const SizedBox(height: 30),
-              
-              const Text("CONFIGURACIÓN NUEVO JUEGO", style: TextStyle(color: Colors.grey, fontSize: 12, letterSpacing: 1.5)),
-              const SizedBox(height: 10),
-              
-              // --- SELECTOR DE SETS ---
-              Container(
-                decoration: BoxDecoration(
-                  color: Colors.grey[900],
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: Colors.white24)
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    _botonSetOption(3, "Mejor de 3"),
-                    _botonSetOption(5, "Mejor de 5"),
-                  ],
-                ),
-              ),
-              
-              const SizedBox(height: 30),
-
-              // --- BOTÓN NUEVO PARTIDO ---
-              SizedBox(
-                width: double.infinity,
-                height: 55,
-                child: ElevatedButton.icon(
-                  icon: const Icon(Icons.add_circle_outline, color: Colors.white),
-                  label: const Text("INICIAR NUEVO PARTIDO", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blue[800],
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                  ),
-                  onPressed: _iniciarNuevoPartido,
-                ),
-              ),
-
-              const SizedBox(height: 15),
-
-              // --- BOTÓN CONTINUAR (CON LÓGICA DE BLOQUEO) ---
-              StreamBuilder(
-                stream: _ref.onValue,
-                builder: (context, snapshot) {
-                  bool hayPartidoEnCurso = false;
-                  if (snapshot.hasData && snapshot.data!.snapshot.value != null) {
-                    final data = Map<String, dynamic>.from(snapshot.data!.snapshot.value as Map);
-                    int pA = data['puntosA'] ?? 0;
-                    int pB = data['puntosB'] ?? 0;
-                    int sA = data['setsA'] ?? 0;
-                    int sB = data['setsB'] ?? 0;
-                    // Si hay algún punto o set, hay partido.
-                    if (pA > 0 || pB > 0 || sA > 0 || sB > 0) {
-                      hayPartidoEnCurso = true;
-                    }
-                  }
-
-                  return SizedBox(
-                    width: double.infinity,
-                    height: 55,
-                    child: ElevatedButton.icon(
-                      icon: const Icon(Icons.play_arrow_rounded),
-                      label: const Text("CONTINUAR ANTERIOR", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green[800],
-                        disabledBackgroundColor: Colors.grey[900], // Color cuando está desactivado
-                        disabledForegroundColor: Colors.grey[700],
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      ),
-                      // Si no hay partido, el botón es null (deshabilitado)
-                      onPressed: hayPartidoEnCurso ? _continuarPartido : null,
-                    ),
-                  );
-                }
-              ),
-
-              const SizedBox(height: 40),
-              TextButton.icon(
-                icon: const Icon(Icons.tv, color: Colors.white54),
-                label: const Text("Ir a Pantalla TV", style: TextStyle(color: Colors.white54)),
-                onPressed: () => Navigator.pushNamed(context, '/tv'),
-              ),
-            ],
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.all(30.0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Icon(Icons.emoji_events, size: 80, color: Colors.amber),
+                const SizedBox(height: 20),
+                const Center(child: Text("TORNEO PRO", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, letterSpacing: 2))),
+                const SizedBox(height: 40),
+        
+                _botonMenu(icon: Icons.add_business, text: "CREAR TORNEO", color: Colors.blue[900]!, onTap: _mostrarDialogoIniciarTorneo),
+                const SizedBox(height: 20),
+                _botonMenu(icon: Icons.sports_tennis, text: "INICIAR PARTIDO", color: Colors.green[800]!, onTap: _mostrarDialogoControlarPartido),
+                const SizedBox(height: 20),
+                _botonMenu(icon: Icons.tv, text: "PANTALLA TV", color: Colors.purple[800]!, onTap: _mostrarDialogoTVTorneo),
+              ],
+            ),
           ),
         ),
       ),
     );
   }
 
-  Widget _botonSetOption(int valor, String texto) {
-    bool seleccionado = _setsSeleccionados == valor;
-    return GestureDetector(
-      onTap: () => setState(() => _setsSeleccionados = valor),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-        decoration: BoxDecoration(
-          color: seleccionado ? Colors.white : Colors.transparent,
-          borderRadius: BorderRadius.circular(8),
+  Widget _botonMenu({required IconData icon, required String text, required Color color, required VoidCallback onTap}) {
+    return SizedBox(
+      height: 60,
+      child: ElevatedButton.icon(
+        icon: Icon(icon, size: 28),
+        label: Text(text, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: color,
+          foregroundColor: Colors.white70,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         ),
-        child: Text(
-          texto, 
-          style: TextStyle(
-            color: seleccionado ? Colors.black : Colors.white54, 
-            fontWeight: FontWeight.bold
-          )
-        ),
+        onPressed: onTap,
       ),
     );
   }
 }
 
-// 2. PANTALLA CONTROL
+// ==========================================
+// 2. PANTALLA CONTROL (DINÁMICA)
+// ==========================================
 class PantallaControl extends StatefulWidget {
-  const PantallaControl({super.key});
+  final String firebasePath; 
+  const PantallaControl({super.key, required this.firebasePath});
+  
   @override
   State<PantallaControl> createState() => _PantallaControlState();
 }
 
 class _PantallaControlState extends State<PantallaControl> {
-  final DatabaseReference _ref = FirebaseDatabase.instance.ref("partido");
-  
+  late DatabaseReference _ref;
   final TextEditingController _nombreAController = TextEditingController();
   final TextEditingController _nombreBController = TextEditingController();
-
   final FocusNode _focusA = FocusNode();
   final FocusNode _focusB = FocusNode();
-
   bool _procesando = false;
 
   @override
   void initState() {
     super.initState();
+    _ref = FirebaseDatabase.instance.ref(widget.firebasePath);
     _ref.child('nombreA').get().then((s) { if(s.exists) _nombreAController.text = s.value.toString(); });
     _ref.child('nombreB').get().then((s) { if(s.exists) _nombreBController.text = s.value.toString(); });
 
@@ -242,12 +691,88 @@ class _PantallaControlState extends State<PantallaControl> {
   }
 
   void _limpiarSiEsDefault(TextEditingController controller, String defaultName) {
-    if (controller.text == defaultName) {
-      controller.clear();
-    }
+    if (controller.text == defaultName) controller.clear();
   }
 
-  // ALERTA: FALTA SAQUE
+  void actualizarPunto(String equipo, int cantidad, bool? saqueLocal) {
+    if (cantidad > 0 && saqueLocal == null) {
+      _mostrarAlertaSaque(context);
+      return; 
+    }
+    if (_procesando) return;
+    setState(() => _procesando = true);
+
+    _ref.once().then((event) {
+      if (event.snapshot.value == null) { setState(() => _procesando = false); return; }
+      final data = Map<String, dynamic>.from(event.snapshot.value as Map);
+      
+      int pA = data['puntosA'] ?? 0;
+      int pB = data['puntosB'] ?? 0;
+      int sA = data['setsA'] ?? 0;
+      int sB = data['setsB'] ?? 0;
+      int maxSets = data['maxSets'] ?? 3; // Lee la configuración que guardamos al entrar
+      int setsParaGanar = (maxSets / 2).ceil();
+
+      bool partidoYaTerminado = (sA >= setsParaGanar || sB >= setsParaGanar);
+      if (cantidad > 0 && partidoYaTerminado) { 
+        String nombreGanador = sA > sB ? (data['nombreA'] ?? "Jugador 1") : (data['nombreB'] ?? "Jugador 2");
+        setState(() => _procesando = false);
+        _mostrarAlertaFinPartido(context, nombreGanador);
+        return;
+      }
+      
+      List<Map<String, dynamic>> historial = [];
+      if (data['historialSets'] != null) {
+         try {
+           final dynamic raw = data['historialSets'];
+           if (raw is List) { historial = List<Map<String, dynamic>>.from(raw.map((e) => Map<String, dynamic>.from(e as Map))); }
+           else if (raw is Map) { historial = List<Map<String, dynamic>>.from(raw.values.map((e) => Map<String, dynamic>.from(e as Map))); }
+         } catch (e) { historial = []; }
+      }
+
+      if (cantidad < 0 && ((equipo == 'A' && pA == 0) || (equipo == 'B' && pB == 0))) {
+         if (historial.isNotEmpty) {
+           final ultimoSet = historial.last;
+           String ganadorUltimo = ultimoSet['ganador'];
+           if (equipo == ganadorUltimo) {
+             historial.removeLast();
+             int pARestaurado = ultimoSet['puntosA'];
+             int pBRestaurado = ultimoSet['puntosB'];
+             if (ganadorUltimo == 'A') { pARestaurado--; sA--; } else { pBRestaurado--; sB--; }
+             _ref.update({'puntosA': pARestaurado, 'puntosB': pBRestaurado, 'setsA': sA, 'setsB': sB, 'historialSets': historial}).whenComplete(() => setState(() => _procesando = false));
+             return;
+           }
+         }
+         setState(() => _procesando = false);
+         return;
+      }
+
+      int nuevoPA = pA; int nuevoPB = pB;
+      if (equipo == 'A') nuevoPA += cantidad; else nuevoPB += cantidad;
+      if (nuevoPA < 0) nuevoPA = 0; if (nuevoPB < 0) nuevoPB = 0;
+
+      if (nuevoPA >= 11 && (nuevoPA - nuevoPB) >= 2) {
+         historial.add({'ganador': 'A', 'puntosA': nuevoPA, 'puntosB': nuevoPB});
+         int nuevosSetsA = sA + 1;
+         _ref.update({ 'puntosA': 0, 'puntosB': 0, 'setsA': nuevosSetsA, 'historialSets': historial }).whenComplete(() => setState(() => _procesando = false));
+      } else if (nuevoPB >= 11 && (nuevoPB - nuevoPA) >= 2) {
+         historial.add({'ganador': 'B', 'puntosA': nuevoPA, 'puntosB': nuevoPB});
+         int nuevosSetsB = sB + 1;
+         _ref.update({ 'puntosA': 0, 'puntosB': 0, 'setsB': nuevosSetsB, 'historialSets': historial }).whenComplete(() => setState(() => _procesando = false));
+      } else {
+         _ref.update({ 'puntosA': nuevoPA, 'puntosB': nuevoPB }).whenComplete(() => setState(() => _procesando = false));
+      }
+    }).catchError((e) { setState(() => _procesando = false); });
+  }
+
+  void actualizarNombre(String equipo, String nombre) { _ref.update({'nombre$equipo': nombre}); }
+  void cambiarSaqueInicial(bool esA) { _ref.update({'saqueInicialA': esA}); }
+  void reset() { 
+    // Al resetear, mantenemos el maxSets
+    _ref.update({ 'puntosA': 0, 'puntosB': 0, 'setsA': 0, 'setsB': 0, 'historialSets': [], 'saqueInicialA': null, 'nombreA': "Jugador 1", 'nombreB': "Jugador 2" }); 
+  }
+
+    // ALERTA: FALTA SAQUE
   void _mostrarAlertaSaque(BuildContext context) {
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
@@ -315,274 +840,242 @@ class _PantallaControlState extends State<PantallaControl> {
     );
   }
 
-  void actualizarPunto(String equipo, int cantidad, bool? saqueLocal) {
-    if (cantidad > 0 && saqueLocal == null) {
-      _mostrarAlertaSaque(context);
-      return; 
-    }
-
-    if (_procesando) return;
-    setState(() => _procesando = true);
-
-    _ref.once().then((event) {
-      if (event.snapshot.value == null) {
-        setState(() => _procesando = false);
-        return;
-      }
-      final data = Map<String, dynamic>.from(event.snapshot.value as Map);
-      
-      int pA = data['puntosA'] ?? 0;
-      int pB = data['puntosB'] ?? 0;
-      int sA = data['setsA'] ?? 0;
-      int sB = data['setsB'] ?? 0;
-      
-      // LEER CONFIGURACIÓN DE SETS (Default 5 si no existe)
-      int maxSets = data['maxSets'] ?? 5;
-      
-      // CALCULAR SETS PARA GANAR (Ej: Si es 5, gana con 3. Si es 3, gana con 2)
-      int setsParaGanar = (maxSets / 2).ceil();
-
-      // CHEQUEO PREVIO: Si ya terminó
-      bool partidoYaTerminado = (sA >= setsParaGanar || sB >= setsParaGanar);
-      
-      if (cantidad > 0 && partidoYaTerminado) {
-        String nombreGanador = sA > sB ? (data['nombreA'] ?? "Jugador 1") : (data['nombreB'] ?? "Jugador 2");
-        setState(() => _procesando = false);
-        _mostrarAlertaFinPartido(context, nombreGanador);
-        return;
-      }
-      
-      List<Map<String, dynamic>> historial = [];
-      if (data['historialSets'] != null) {
-         try {
-           final dynamic raw = data['historialSets'];
-           if (raw is List) { historial = List<Map<String, dynamic>>.from(raw.map((e) => Map<String, dynamic>.from(e as Map))); }
-           else if (raw is Map) { historial = List<Map<String, dynamic>>.from(raw.values.map((e) => Map<String, dynamic>.from(e as Map))); }
-         } catch (e) { historial = []; }
-      }
-
-      // CASO A: DESHACER
-      if (cantidad < 0 && ((equipo == 'A' && pA == 0) || (equipo == 'B' && pB == 0))) {
-         if (historial.isNotEmpty) {
-           final ultimoSet = historial.last;
-           String ganadorUltimo = ultimoSet['ganador'];
-           if (equipo == ganadorUltimo) {
-             historial.removeLast();
-             int pARestaurado = ultimoSet['puntosA'];
-             int pBRestaurado = ultimoSet['puntosB'];
-             if (ganadorUltimo == 'A') { pARestaurado--; sA--; } else { pBRestaurado--; sB--; }
-             _ref.update({
-               'puntosA': pARestaurado, 'puntosB': pBRestaurado,
-               'setsA': sA, 'setsB': sB,
-               'historialSets': historial
-             }).whenComplete(() => setState(() => _procesando = false));
-             return;
-           }
-         }
-         setState(() => _procesando = false);
-         return;
-      }
-
-      // CASO B: JUGADA NORMAL
-      int nuevoPA = pA;
-      int nuevoPB = pB;
-      if (equipo == 'A') nuevoPA += cantidad; else nuevoPB += cantidad;
-      if (nuevoPA < 0) nuevoPA = 0;
-      if (nuevoPB < 0) nuevoPB = 0;
-
-      if (nuevoPA >= 11 && (nuevoPA - nuevoPB) >= 2) {
-         historial.add({'ganador': 'A', 'puntosA': nuevoPA, 'puntosB': nuevoPB});
-         int nuevosSetsA = sA + 1;
-         
-         _ref.update({ 'puntosA': 0, 'puntosB': 0, 'setsA': nuevosSetsA, 'historialSets': historial
-         }).whenComplete(() {
-            setState(() => _procesando = false);
-            if (nuevosSetsA >= setsParaGanar) {
-              _mostrarAlertaFinPartido(context, data['nombreA'] ?? "Jugador 1");
-            }
-         });
-
-      } else if (nuevoPB >= 11 && (nuevoPB - nuevoPA) >= 2) {
-         historial.add({'ganador': 'B', 'puntosA': nuevoPA, 'puntosB': nuevoPB});
-         int nuevosSetsB = sB + 1;
-
-         _ref.update({ 'puntosA': 0, 'puntosB': 0, 'setsB': nuevosSetsB, 'historialSets': historial
-         }).whenComplete(() {
-            setState(() => _procesando = false);
-            if (nuevosSetsB >= setsParaGanar) {
-              _mostrarAlertaFinPartido(context, data['nombreB'] ?? "Jugador 2");
-            }
-         });
-
-      } else {
-         _ref.update({ 'puntosA': nuevoPA, 'puntosB': nuevoPB
-         }).whenComplete(() => setState(() => _procesando = false));
-      }
-
-    }).catchError((e) {
-      setState(() => _procesando = false);
-    });
-  }
-
-  void actualizarNombre(String equipo, String nombre) {
-    _ref.update({'nombre$equipo': nombre});
-  }
-  
-  void cambiarSaqueInicial(bool esA) {
-    _ref.update({'saqueInicialA': esA});
-  }
-
-  void reset() {
-    _ref.update({
-      'puntosA': 0, 'puntosB': 0, 'setsA': 0, 'setsB': 0, 
-      'historialSets': [], 
-      'saqueInicialA': null, 
-      'nombreA': "Jugador 1", 'nombreB': "Jugador 2",
-      'maxSets': 5 // Default al resetear desde acá
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
     final esHorizontal = MediaQuery.of(context).orientation == Orientation.landscape;
+    if (esHorizontal) return const Scaffold(backgroundColor: Colors.black, body: Center(child: Text("GIRA EL TELÉFONO", style: TextStyle(color: Colors.white))));
 
-    if (esHorizontal) {
-      return Scaffold(
-        backgroundColor: Colors.black,
-        body: Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: const [Icon(Icons.screen_lock_portrait, size: 80, color: Colors.white), SizedBox(height: 20), Text("GIRA TU TELÉFONO", style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold))])),
-      );
-    }
     return Scaffold(
       resizeToAvoidBottomInset: false,
       appBar: AppBar(
-        title: const Text("Control de Mesa"), 
+        title: Text("Mesa: ${widget.firebasePath.split('_').last}"),
         actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 10),
-            child: SizedBox(width: 40, height: 40, child: GoogleCastButton()),
-          ),
-          IconButton(icon: const Icon(Icons.refresh, color: Colors.white), onPressed: reset)
+          Padding(padding: const EdgeInsets.only(right: 10), child: SizedBox(width: 40, height: 40, child: GoogleCastButton())),
+          IconButton(icon: const Icon(Icons.refresh), onPressed: reset)
         ],          
       ),
       body: StreamBuilder(
         stream: _ref.onValue,
         builder: (context, snapshot) {
-          int pA = 0, pB = 0, sA = 0, sB = 0;
-          bool? saqueInicialA;
-          String nombreA = "Jugador 1";
-          String nombreB = "Jugador 2";
-          List<Map<String, dynamic>> historialSets = [];
-
-          if (snapshot.hasData && snapshot.data!.snapshot.value != null) {
+            if (!snapshot.hasData || snapshot.data!.snapshot.value == null) return const Center(child: CircularProgressIndicator());
             final data = Map<String, dynamic>.from(snapshot.data!.snapshot.value as Map);
-            pA = data['puntosA'] ?? 0;
-            pB = data['puntosB'] ?? 0;
-            sA = data['setsA'] ?? 0;
-            sB = data['setsB'] ?? 0;
-            saqueInicialA = data['saqueInicialA'];
-            nombreA = data['nombreA'] ?? "Jugador 1";
-            nombreB = data['nombreB'] ?? "Jugador 2";
             
+            int pA = data['puntosA'] ?? 0; int pB = data['puntosB'] ?? 0;
+            int sA = data['setsA'] ?? 0; int sB = data['setsB'] ?? 0;
+            String nA = data['nombreA'] ?? "Jugador 1"; String nB = data['nombreB'] ?? "Jugador 2";
+            bool? saqueInicialA = data['saqueInicialA'];
+            List<Map<String, dynamic>> historial = [];
             if (data['historialSets'] != null) {
-              try {
-                final dynamic raw = data['historialSets'];
-                if (raw is List) {
-                   historialSets = List<Map<String, dynamic>>.from(raw.map((e) => Map<String, dynamic>.from(e as Map)));
-                } else if (raw is Map) {
-                   historialSets = List<Map<String, dynamic>>.from(raw.values.map((e) => Map<String, dynamic>.from(e as Map)));
-                }
-              } catch (e) { historialSets = []; }
+               try { final dynamic raw = data['historialSets'];
+               if (raw is List) historial = List<Map<String, dynamic>>.from(raw.map((e) => Map<String, dynamic>.from(e as Map)));
+               else if (raw is Map) historial = List<Map<String, dynamic>>.from(raw.values.map((e) => Map<String, dynamic>.from(e as Map)));
+               } catch (e) { historial = []; }
             }
+
+            if (_nombreAController.text != nA && !_focusA.hasFocus) _nombreAController.text = nA;
+            if (_nombreBController.text != nB && !_focusB.hasFocus) _nombreBController.text = nB;
+
+            bool bloqueado = (pA + pB) >= 2 || sA > 0 || sB > 0;
+            int totalPuntos = pA + pB;
+            int setActual = sA + sB + 1;
+            bool esSetImpar = (setActual % 2 == 1);
+            bool safeSaque = saqueInicialA ?? true;
+            bool haySaqueDefinido = saqueInicialA != null;
+            bool saqueInicialEnEsteSet = esSetImpar ? safeSaque : !safeSaque;
+            bool turnoBaseParaA;
+            if (pA >= 10 && pB >= 10) turnoBaseParaA = (totalPuntos % 2 == 0);
+            else turnoBaseParaA = ((totalPuntos ~/ 2) % 2 == 0);
+            bool saqueParaA = saqueInicialEnEsteSet ? turnoBaseParaA : !turnoBaseParaA;
+            bool invertirLados = (sA + sB) % 2 != 0;
+            bool flechaIzquierda = (saqueParaA == !invertirLados);
+
+            Widget topAzul = Row(children: [
+               Expanded(child: TextField(controller: _nombreAController, focusNode: _focusA, style: const TextStyle(color: Colors.blueAccent, fontSize: 18), cursorColor: Colors.blueAccent, decoration: const InputDecoration(isDense: true, focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.blueAccent, width: 2)), enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)), hintStyle: TextStyle(color: Colors.white24)), onChanged: (v) => actualizarNombre('A', v), onTap: () => _limpiarSiEsDefault(_nombreAController, "Jugador 1"))),
+               const SizedBox(width: 5),
+               _BotonSaqueConPelota(seleccionado: saqueInicialA == true, bloqueado: bloqueado, color: Colors.blue[800]!, onTap: () => cambiarSaqueInicial(true)),
+            ]);
+            Widget topRojo = Row(children: [
+               Expanded(child: TextField(controller: _nombreBController, focusNode: _focusB, style: const TextStyle(color: Colors.redAccent, fontSize: 18), cursorColor: Colors.redAccent, decoration: const InputDecoration(isDense: true, focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.redAccent, width: 2)), enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)), hintStyle: TextStyle(color: Colors.white24)), onChanged: (v) => actualizarNombre('B', v), onTap: () => _limpiarSiEsDefault(_nombreBController, "Jugador 2"))),
+               const SizedBox(width: 5),
+               _BotonSaqueConPelota(seleccionado: saqueInicialA == false, bloqueado: bloqueado, color: Colors.red[800]!, onTap: () => cambiarSaqueInicial(false)),
+            ]);
+
+            Widget scoreAzul = Column(children: [Text("$pA", style: const TextStyle(color: Colors.white, fontSize: 80, height: 1, fontWeight: FontWeight.bold))]);
+            Widget scoreRojo = Column(children: [Text("$pB", style: const TextStyle(color: Colors.white, fontSize: 80, height: 1, fontWeight: FontWeight.bold))]);
+
+            Widget botonAzul = _BotonJugador(color: Colors.blue[900]!, label: "AZUL", onSumar: () => actualizarPunto('A', 1, saqueInicialA), onRestar: () => actualizarPunto('A', -1, saqueInicialA));
+            Widget botonRojo = _BotonJugador(color: Colors.red[900]!, label: "ROJO", onSumar: () => actualizarPunto('B', 1, saqueInicialA), onRestar: () => actualizarPunto('B', -1, saqueInicialA));
+
+            Widget indicadorSaque = Opacity(
+               opacity: haySaqueDefinido ? 1.0 : 0.0,
+               child: Container(
+                 width: 65, height: 38, alignment: Alignment.center,
+                 decoration: BoxDecoration(color: Colors.grey[900], border: Border.all(color: saqueParaA ? Colors.blueAccent : Colors.redAccent, width: 2), borderRadius: BorderRadius.circular(30)),
+                 child: Icon(flechaIzquierda ? Icons.arrow_back : Icons.arrow_forward, color: Colors.white, size: 26, shadows: const [Shadow(color: Colors.white, offset: Offset(0.5, 0)), Shadow(color: Colors.white, offset: Offset(-0.5, 0)), Shadow(color: Colors.white, offset: Offset(0, 0.5)), Shadow(color: Colors.white, offset: Offset(0, -0.5))]),
+               ),
+            );
+
+            return Column(
+              children: [
+                Padding(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5), child: Row(children: [Expanded(child: invertirLados ? topRojo : topAzul), const Padding(padding: EdgeInsets.symmetric(horizontal: 8.0), child: Text("VS", style: TextStyle(color: Colors.grey, fontSize: 10))), Expanded(child: invertirLados ? topAzul : topRojo)])),
+                Padding(padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0), child: _TablaPuntuacion(nombreA: nA, nombreB: nB, setsA: sA, setsB: sB, historial: historial)),
+                Padding(padding: const EdgeInsets.symmetric(vertical: 10), child: Row(children: [Expanded(child: Center(child: invertirLados ? scoreRojo : scoreAzul)), indicadorSaque, Expanded(child: Center(child: invertirLados ? scoreAzul : scoreRojo))])),
+                Expanded(child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: invertirLados ? [botonRojo, botonAzul] : [botonAzul, botonRojo])),
+              ],
+            );
+        }
+      )
+    );
+  }
+}
+
+// ==========================================
+// 3. PANTALLA TV TORNEO
+// ==========================================
+class PantallaTVTorneo extends StatelessWidget {
+  final String clubKey; // Clave saneada (ej: CLUBTENIS)
+  final int mesasCount;
+
+  const PantallaTVTorneo({super.key, required this.clubKey, required this.mesasCount});
+
+  @override
+  Widget build(BuildContext context) {
+    int columnas = (mesasCount / 2).ceil();
+    if (columnas < 1) columnas = 1;
+
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Column(
+        children: [
+          Expanded(
+            child: Row(
+              children: List.generate(columnas, (index) {
+                int mesaNum = index + 1;
+                return Expanded(child: _CeldaMesaConectada(clubKey: clubKey, mesaIndex: mesaNum));
+              }),
+            ),
+          ),
+          Expanded(
+            child: Row(
+              children: List.generate(columnas, (index) {
+                int mesaNum = index + 1 + columnas;
+                if (mesaNum > mesasCount) return Expanded(child: Container(color: Colors.black)); 
+                return Expanded(child: _CeldaMesaConectada(clubKey: clubKey, mesaIndex: mesaNum));
+              }),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CeldaMesaConectada extends StatelessWidget {
+  final String clubKey;
+  final int mesaIndex;
+
+  const _CeldaMesaConectada({required this.clubKey, required this.mesaIndex});
+
+  @override
+  Widget build(BuildContext context) {
+    final ref = FirebaseDatabase.instance.ref("torneos/$clubKey/mesa_$mesaIndex");
+
+    return _CeldaTV(
+      nombre: "MESA $mesaIndex",
+      child: StreamBuilder(
+        stream: ref.onValue,
+        builder: (context, snapshot) {
+          if (!snapshot.hasData || snapshot.data!.snapshot.value == null) {
+            return const TvScoreboard(
+               player1Name: "", player2Name: "", player1Score: 0, player2Score: 0, 
+               player1Sets: 0, player2Sets: 0, setHistory: [], servingPlayer: null
+            );
           }
 
-          if (_nombreAController.text != nombreA && !_focusA.hasFocus) _nombreAController.text = nombreA;
-          if (_nombreBController.text != nombreB && !_focusB.hasFocus) _nombreBController.text = nombreB;
-
-          bool bloqueado = (pA + pB) >= 2 || sA > 0 || sB > 0;
+          final data = Map<String, dynamic>.from(snapshot.data!.snapshot.value as Map);
           
-          int totalPuntos = pA + pB;
-          int setActual = sA + sB + 1;
-          bool esSetImpar = (setActual % 2 == 1);
-          
-          bool safeSaque = saqueInicialA ?? true;
-          bool haySaqueDefinido = saqueInicialA != null;
+          final int pA = data['puntosA'] ?? 0;
+          final int pB = data['puntosB'] ?? 0;
+          final int sA = data['setsA'] ?? 0;
+          final int sB = data['setsB'] ?? 0;
+          final String nA = data['nombreA'] ?? "JUG 1";
+          final String nB = data['nombreB'] ?? "JUG 2";
+          final bool? saqueInicialA = data['saqueInicialA'];
 
-          bool saqueInicialEnEsteSet = esSetImpar ? safeSaque : !safeSaque;
-          bool turnoBaseParaA;
-          if (pA >= 10 && pB >= 10) turnoBaseParaA = (totalPuntos % 2 == 0);
-          else turnoBaseParaA = ((totalPuntos ~/ 2) % 2 == 0);
-          
-          bool saqueParaA = saqueInicialEnEsteSet ? turnoBaseParaA : !turnoBaseParaA;
-          bool invertirLados = (sA + sB) % 2 != 0;
+          List<String> historialFormateado = [];
+          if (data['historialSets'] != null) {
+            try {
+              final dynamic raw = data['historialSets'];
+              List<Map<String, dynamic>> listaSets = [];
+              if (raw is List) {
+                 listaSets = List<Map<String, dynamic>>.from(raw.map((e) => Map<String, dynamic>.from(e as Map)));
+              } else if (raw is Map) {
+                 listaSets = List<Map<String, dynamic>>.from(raw.values.map((e) => Map<String, dynamic>.from(e as Map)));
+              }
+              for (var s in listaSets) {
+                historialFormateado.add("${s['puntosA']}-${s['puntosB']}");
+              }
+            } catch (e) { historialFormateado = []; }
+          }
 
-          // WIDGETS
-          Widget topAzul = Row(children: [
-             Expanded(child: TextField(controller: _nombreAController, focusNode: _focusA, style: const TextStyle(color: Colors.blueAccent, fontSize: 18), cursorColor: Colors.blueAccent, decoration: const InputDecoration(isDense: true, focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.blueAccent, width: 2)), enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)), hintStyle: TextStyle(color: Colors.white24)), onChanged: (v) => actualizarNombre('A', v), onTap: () => _limpiarSiEsDefault(_nombreAController, "Jugador 1"))),
-             const SizedBox(width: 5),
-             _BotonSaqueConPelota(seleccionado: saqueInicialA == true, bloqueado: bloqueado, color: Colors.blue[800]!, onTap: () => cambiarSaqueInicial(true)),
-          ]);
-          Widget topRojo = Row(children: [
-             Expanded(child: TextField(controller: _nombreBController, focusNode: _focusB, style: const TextStyle(color: Colors.redAccent, fontSize: 18), cursorColor: Colors.redAccent, decoration: const InputDecoration(isDense: true, focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.redAccent, width: 2)), enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)), hintStyle: TextStyle(color: Colors.white24)), onChanged: (v) => actualizarNombre('B', v), onTap: () => _limpiarSiEsDefault(_nombreBController, "Jugador 2"))),
-             const SizedBox(width: 5),
-             _BotonSaqueConPelota(seleccionado: saqueInicialA == false, bloqueado: bloqueado, color: Colors.red[800]!, onTap: () => cambiarSaqueInicial(false)),
-          ]);
+          int? quienSaca;
+          if (saqueInicialA != null) {
+            int totalPuntos = pA + pB;
+            int setActual = sA + sB + 1;
+            bool esSetImpar = (setActual % 2 == 1);
+            bool safeSaque = saqueInicialA;
+            bool saqueInicialEnEsteSet = esSetImpar ? safeSaque : !safeSaque;
+            bool turnoBaseParaA;
+            if (pA >= 10 && pB >= 10) turnoBaseParaA = (totalPuntos % 2 == 0);
+            else turnoBaseParaA = ((totalPuntos ~/ 2) % 2 == 0);
+            bool saqueParaA = saqueInicialEnEsteSet ? turnoBaseParaA : !turnoBaseParaA;
+            quienSaca = saqueParaA ? 1 : 2;
+          }
 
-          Widget scoreAzul = Column(children: [Text("$pA", style: const TextStyle(color: Colors.white, fontSize: 80, height: 1, fontWeight: FontWeight.bold))]);
-          Widget scoreRojo = Column(children: [Text("$pB", style: const TextStyle(color: Colors.white, fontSize: 80, height: 1, fontWeight: FontWeight.bold))]);
-
-          Widget botonAzul = _BotonJugador(
-             color: Colors.blue[900]!, label: "AZUL", 
-             onSumar: () => actualizarPunto('A', 1, saqueInicialA), 
-             onRestar: () => actualizarPunto('A', -1, saqueInicialA));
-          
-          Widget botonRojo = _BotonJugador(
-             color: Colors.red[900]!, label: "ROJO", 
-             onSumar: () => actualizarPunto('B', 1, saqueInicialA), 
-             onRestar: () => actualizarPunto('B', -1, saqueInicialA));
-
-          Widget separadorVS = const Padding(padding: EdgeInsets.symmetric(horizontal: 8.0), child: Text("VS", style: TextStyle(color: Colors.grey, fontSize: 10)));
-          
-          bool flechaIzquierda = (saqueParaA == !invertirLados);
-
-          Widget indicadorSaque = Opacity(
-             opacity: haySaqueDefinido ? 1.0 : 0.0,
-             child: Container(
-               width: 65, height: 38, alignment: Alignment.center,
-               decoration: BoxDecoration(color: Colors.grey[900], border: Border.all(color: saqueParaA ? Colors.blueAccent : Colors.redAccent, width: 2), borderRadius: BorderRadius.circular(30)),
-               child: Icon(flechaIzquierda ? Icons.arrow_back : Icons.arrow_forward, color: Colors.white, size: 26, shadows: const [Shadow(color: Colors.white, offset: Offset(0.5, 0)), Shadow(color: Colors.white, offset: Offset(-0.5, 0)), Shadow(color: Colors.white, offset: Offset(0, 0.5)), Shadow(color: Colors.white, offset: Offset(0, -0.5))]),
-             ),
-          );
-
-          return Column(
-            children: [
-              Padding(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5), child: Row(children: [Expanded(child: invertirLados ? topRojo : topAzul), separadorVS, Expanded(child: invertirLados ? topAzul : topRojo)])),
-              
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
-                child: _TablaPuntuacion(
-                  nombreA: nombreA,
-                  nombreB: nombreB,
-                  setsA: sA,
-                  setsB: sB,
-                  historial: historialSets,
-                ),
+          return FittedBox(
+            fit: BoxFit.contain,
+            child: SizedBox(
+              width: 1000, 
+              height: 600,
+              child: TvScoreboard(
+                player1Name: nA,
+                player2Name: nB,
+                player1Score: pA,
+                player2Score: pB,
+                player1Sets: sA,
+                player2Sets: sB,
+                setHistory: historialFormateado,
+                servingPlayer: quienSaca,
               ),
-
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                child: Row(
-                  children: [
-                    Expanded(child: Center(child: invertirLados ? scoreRojo : scoreAzul)),
-                    indicadorSaque,
-                    Expanded(child: Center(child: invertirLados ? scoreAzul : scoreRojo)),
-                  ],
-                )
-              ),
-              
-              Expanded(child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: invertirLados ? [botonRojo, botonAzul] : [botonAzul, botonRojo])),
-            ],
+            ),
           );
         }
+      ),
+    );
+  }
+}
+
+class _CeldaTV extends StatelessWidget {
+  final String nombre;
+  final Widget? child;
+  const _CeldaTV({required this.nombre, this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(border: Border.all(color: Colors.white24, width: 1)),
+      child: Stack(
+        children: [
+          if (child != null) Padding(padding: const EdgeInsets.only(top: 25.0), child: Center(child: child)),
+          Positioned(
+            top: 5, left: 8,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(color: Colors.white12, borderRadius: BorderRadius.circular(4)),
+              child: Text(nombre.toUpperCase(), style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold)),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -749,34 +1242,5 @@ class _BotonJugador extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Expanded(child: Container(color: color, child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [ElevatedButton(style: ElevatedButton.styleFrom(shape: const CircleBorder(), padding: const EdgeInsets.all(25), backgroundColor: Colors.white24), onPressed: onSumar, child: const Icon(Icons.add, size: 100, color: Colors.white70)), const SizedBox(height: 30), ElevatedButton(style: ElevatedButton.styleFrom(shape: const CircleBorder(), padding: const EdgeInsets.all(15), backgroundColor: Colors.black26), onPressed: onRestar, child: const Icon(Icons.remove, size: 40, color: Colors.white70))])));
-  }
-}
-
-class PantallaTV extends StatelessWidget {
-  const PantallaTV({super.key});
-  @override
-  Widget build(BuildContext context) {
-    final ref = FirebaseDatabase.instance.ref("partido");
-    return Scaffold(body: StreamBuilder(stream: ref.onValue, builder: (context, snapshot) {
-          if (!snapshot.hasData || snapshot.data!.snapshot.value == null) return const Center(child: CircularProgressIndicator());
-          final data = Map<String, dynamic>.from(snapshot.data!.snapshot.value as Map);
-          final int pA = data['puntosA'] ?? 0; final int pB = data['puntosB'] ?? 0; final int sA = data['setsA'] ?? 0; final int sB = data['setsB'] ?? 0;
-          final String nA = data['nombreA'] ?? "JUGADOR A"; final String nB = data['nombreB'] ?? "JUGADOR B"; final bool saqueInicialA = data['saqueInicialA'] ?? true;
-          int setActual = sA + sB + 1; bool esSetImpar = (setActual % 2 == 1);
-          bool saqueInicialEnEsteSet = esSetImpar ? saqueInicialA : !saqueInicialA; int totalPuntos = pA + pB;
-          bool turnoBaseParaA; if (pA >= 10 && pB >= 10) turnoBaseParaA = (totalPuntos % 2 == 0); else turnoBaseParaA = ((totalPuntos ~/ 2) % 2 == 0);
-          bool saqueParaA = saqueInicialEnEsteSet ? turnoBaseParaA : !turnoBaseParaA;
-          return Row(children: [Expanded(child: _PanelJugador(nombre: nA, puntos: pA, puntosOtro: pB, sets: sA, color: Colors.black, colorEquipo: Colors.blue[800]!, tieneSaque: saqueParaA)), Container(width: 3, color: Colors.white30), Expanded(child: _PanelJugador(nombre: nB, puntos: pB, puntosOtro: pA, sets: sB, color: Colors.black, colorEquipo: Colors.red[800]!, tieneSaque: !saqueParaA))]);
-    }));
-  }
-}
-
-class _PanelJugador extends StatelessWidget {
-  final String nombre; final int puntos; final int puntosOtro; final int sets; final Color color; final Color colorEquipo; final bool tieneSaque;
-  const _PanelJugador({super.key, required this.nombre, required this.puntos, required this.puntosOtro, required this.sets, required this.color, required this.colorEquipo, required this.tieneSaque});
-  Color _getColorPuntos(int puntos, int puntosOtro) { if (puntos >= 11 && (puntos - puntosOtro) >= 2) return Colors.red; else if (puntos >= 10) return Colors.yellow; else return Colors.white; }
-  @override
-  Widget build(BuildContext context) {
-    return Container(color: color, child: Stack(alignment: Alignment.center, children: [Positioned(top: 500, right: 30, child: Container(padding: const EdgeInsets.symmetric(horizontal: 60, vertical: 10), decoration: BoxDecoration(color: colorEquipo, borderRadius: BorderRadius.circular(10)), child: Text("$sets", style: const TextStyle(fontSize: 110, fontWeight: FontWeight.bold, color: Colors.white)))), Column(mainAxisAlignment: MainAxisAlignment.start, children: [const SizedBox(height: 40), Opacity(opacity: tieneSaque ? 1.0 : 0.0, child: Container(decoration: const BoxDecoration(shape: BoxShape.circle, boxShadow: [BoxShadow(color: Colors.black45, blurRadius: 10, offset: Offset(0, 5))]), child: Image.asset('assets/pelota_donic.jpg', width: 60, height: 60))), const SizedBox(height: 10), Text("$puntos", style: TextStyle(fontSize: 280, fontWeight: FontWeight.bold, color: _getColorPuntos(puntos, puntosOtro), height: 1)), Text(nombre.toUpperCase(), style: const TextStyle(fontSize: 45, color: Colors.white70, fontWeight: FontWeight.w300))])]));
   }
 }
