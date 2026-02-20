@@ -9,6 +9,11 @@ import 'firebase_options.dart';
 // Importamos tu diseño visual
 import 'tv_scoreboard.dart';
 
+// ==========================================
+// CONFIGURACIÓN DE AMBIENTE
+// ==========================================
+const bool IS_DEVELOPMENT = true; 
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await SystemChrome.setPreferredOrientations([
@@ -83,7 +88,6 @@ class PasswordGenerator {
   }
 }
 
-// Formateador para forzar mayúsculas visualmente mientras se escribe
 class UpperCaseTextFormatter extends TextInputFormatter {
   @override
   TextEditingValue formatEditUpdate(TextEditingValue oldValue, TextEditingValue newValue) {
@@ -112,11 +116,10 @@ class _SeleccionModoState extends State<SeleccionModo> {
   final TextEditingController _clubController = TextEditingController();
   final TextEditingController _passwordInputController = TextEditingController();
   
-  // Lista de clubes cargados desde Firebase para los dropdowns
   List<Map<String, String>> _clubesDisponibles = [];
   bool _cargandoClubes = false;
 
-  int _mesasTorneoSeleccionadas = 6; // DEFAULT 6
+  int _mesasTorneoSeleccionadas = 6;
 
   @override
   void dispose() {
@@ -125,7 +128,6 @@ class _SeleccionModoState extends State<SeleccionModo> {
     super.dispose();
   }
 
-  // Método para buscar clubes existentes en la base de datos
   Future<void> _cargarClubesFromFirebase() async {
     setState(() => _cargandoClubes = true);
     _clubesDisponibles.clear();
@@ -136,8 +138,8 @@ class _SeleccionModoState extends State<SeleccionModo> {
         data.forEach((key, value) {
           if (value['config'] != null) {
             _clubesDisponibles.add({
-              'key': key, // ID interno (ej: CLUBTENIS)
-              'nombre': value['config']['nombre'].toString() // Nombre bonito (ej: CLUB TENIS)
+              'key': key,
+              'nombre': value['config']['nombre'].toString()
             });
           }
         });
@@ -149,10 +151,8 @@ class _SeleccionModoState extends State<SeleccionModo> {
     }
   }
 
-  // --- LÓGICA: INICIAR TORNEO (CREAR) ---
   void _mostrarDialogoIniciarTorneo() {
     _clubController.clear();
-    // Restaurar default 6 al abrir
     _mesasTorneoSeleccionadas = 6; 
 
     showDialog(
@@ -170,7 +170,6 @@ class _SeleccionModoState extends State<SeleccionModo> {
                 TextField(
                   controller: _clubController,
                   textCapitalization: TextCapitalization.characters,
-                  // Forzamos mayúsculas al escribir
                   inputFormatters: [UpperCaseTextFormatter()],
                   decoration: const InputDecoration(
                     labelText: "Nombre del Club",
@@ -213,7 +212,6 @@ class _SeleccionModoState extends State<SeleccionModo> {
                         if (context.mounted) {
                           Navigator.pop(context);
                           _mostrarDialogoPassword(passwordGenerada);
-                          // Recargamos la lista de clubes para que aparezca en las otras opciones
                           _cargarClubesFromFirebase(); 
                         }
                       } catch (e) {
@@ -222,10 +220,7 @@ class _SeleccionModoState extends State<SeleccionModo> {
                       }
                     }
                   },
-                  child: const Text(
-                    "CREAR TORNEO", 
-                    style: TextStyle(color: Colors.white70)
-                  ),                  
+                  child: const Text("CREAR TORNEO", style: TextStyle(color: Colors.white70)),                  
                 ),
             ],
           );
@@ -266,22 +261,18 @@ class _SeleccionModoState extends State<SeleccionModo> {
   }
 
   Future<String> _crearEstructuraTorneo(String clubInput, int cantidadMesas) async {
-    // 1. FORZAR MAYÚSCULAS Y LIMPIAR
     String nombreDisplay = clubInput.trim().toUpperCase();
     String clubKey = sanitizeClubKey(clubInput);
     
     final ref = FirebaseDatabase.instance.ref("torneos/$clubKey");
     
-    // 2. VALIDAR EXISTENCIA
     final snapshot = await ref.get();
     if (snapshot.exists) {
       throw "El club '$nombreDisplay' ya existe. Usa otro nombre.";
     }
 
-    // 3. GENERAR PASSWORD
     String password = PasswordGenerator.generar();
 
-    // 4. GUARDAR ESTRUCTURA
     await ref.update({
       'config': {
         'nombre': nombreDisplay,
@@ -298,7 +289,7 @@ class _SeleccionModoState extends State<SeleccionModo> {
         'nombreA': "JUGADOR 1", 'nombreB': "JUGADOR 2",
         'historialSets': [],
         'saqueInicialA': null,
-        'maxSets': 3, // Default sets base
+        'maxSets': 3,
       });
     }
 
@@ -307,21 +298,15 @@ class _SeleccionModoState extends State<SeleccionModo> {
 
   // --- LÓGICA: CONTROLAR UN PARTIDO (LOGIN + SETS) ---
   void _mostrarDialogoControlarPartido() async {
-    // Cargamos clubes antes de mostrar el diálogo
     await _cargarClubesFromFirebase();
-
     _passwordInputController.clear();
     
-    // Variables de estado
-    String? selectedClubKey; // El ID del club seleccionado
+    String? selectedClubKey; 
     bool loadingConfig = false;
-    
-    // Datos del club seleccionado
     String realPassword = "";
     int totalMesas = 0;
-    
     int mesaSeleccionada = 1;
-    int setsSeleccionados = 3; // DEFAULT 3
+    int setsSeleccionados = 3; 
 
     if (!mounted) return;
 
@@ -330,7 +315,6 @@ class _SeleccionModoState extends State<SeleccionModo> {
       builder: (context) => StatefulBuilder(
         builder: (context, setStateDialog) {
           
-          // Función para cargar la config específica del club seleccionado
           void fetchClubConfig(String key) async {
              setStateDialog(() => loadingConfig = true);
              try {
@@ -342,7 +326,11 @@ class _SeleccionModoState extends State<SeleccionModo> {
                       realPassword = data['password'].toString();
                       totalMesas = int.parse(data['cantidadMesas'].toString());
                       loadingConfig = false;
-                      mesaSeleccionada = 1; // Reset mesa al cambiar club
+                      mesaSeleccionada = 1; 
+
+                      if (IS_DEVELOPMENT) {
+                        _passwordInputController.text = realPassword;
+                      }
                    });
                 }
              } catch (e) {
@@ -357,7 +345,6 @@ class _SeleccionModoState extends State<SeleccionModo> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // PASO 1: Selector de Club
                   const Text("Selecciona el Club:", style: TextStyle(color: Colors.white70)),
                   const SizedBox(height: 5),
                   if (_cargandoClubes)
@@ -394,36 +381,29 @@ class _SeleccionModoState extends State<SeleccionModo> {
                       ),
                     ),
 
-                  // Si se seleccionó club y está cargando config
                   if (loadingConfig)
                      const Padding(padding: EdgeInsets.only(top: 20), child: Center(child: CircularProgressIndicator())),
 
-                  // PASO 2: Controles (Solo si ya cargó la config del club)
                   if (selectedClubKey != null && !loadingConfig && totalMesas > 0) ...[
                     const SizedBox(height: 20),
                     const Divider(color: Colors.white24),
                     const SizedBox(height: 10),
 
-                    // Password (YA NO ESTÁ OCULTO)
                     TextField(
                       controller: _passwordInputController,
-                      obscureText: false, // NO OCULTAR
+                      obscureText: false,
                       decoration: const InputDecoration(
                         labelText: "Contraseña del Torneo",
-                        prefixIcon: Icon(Icons.lock_open), // Icono abierto para indicar visibilidad
+                        prefixIcon: Icon(Icons.lock_open), 
                       ),
                     ),
                     const SizedBox(height: 20),
 
-                    // Selección de Mesa
                     const Text("Seleccionar Mesa:", style: TextStyle(color: Colors.white70)),
                     Container(
                       width: double.infinity,
                       padding: const EdgeInsets.symmetric(horizontal: 12),
-                      decoration: BoxDecoration(
-                        color: Colors.white10,
-                        borderRadius: BorderRadius.circular(8)
-                      ),
+                      decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(8)),
                       child: DropdownButtonHideUnderline(
                         child: DropdownButton<int>(
                           value: mesaSeleccionada,
@@ -439,26 +419,13 @@ class _SeleccionModoState extends State<SeleccionModo> {
                     ),
 
                     const SizedBox(height: 20),
-                    // Selección de Sets (3 o 5)
                     const Text("Modo de Juego:", style: TextStyle(color: Colors.white70)),
                     const SizedBox(height: 10),
                     Row(
                       children: [
-                        Expanded(
-                          child: ChoiceChip(
-                            label: const Center(child: Text("Mejor de 3")),
-                            selected: setsSeleccionados == 3,
-                            onSelected: (s) => setStateDialog(() => setsSeleccionados = 3),
-                          ),
-                        ),
+                        Expanded(child: ChoiceChip(label: const Center(child: Text("Mejor de 3")), selected: setsSeleccionados == 3, onSelected: (s) => setStateDialog(() => setsSeleccionados = 3))),
                         const SizedBox(width: 10),
-                        Expanded(
-                          child: ChoiceChip(
-                            label: const Center(child: Text("Mejor de 5")),
-                            selected: setsSeleccionados == 5,
-                            onSelected: (s) => setStateDialog(() => setsSeleccionados = 5),
-                          ),
-                        ),
+                        Expanded(child: ChoiceChip(label: const Center(child: Text("Mejor de 5")), selected: setsSeleccionados == 5, onSelected: (s) => setStateDialog(() => setsSeleccionados = 5))),
                       ],
                     ),
                   ],
@@ -467,26 +434,17 @@ class _SeleccionModoState extends State<SeleccionModo> {
             ),
             actions: [
               TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancelar")),
-              // Solo habilitar botón si hay club seleccionado y hay mesas cargadas
               if (selectedClubKey != null && totalMesas > 0)
                 ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green[800],
-                    foregroundColor: Colors.white70,
-                  ),
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.green[800], foregroundColor: Colors.white70),
                   onPressed: () async {
-                    // VALIDAR PASSWORD
                     if (_passwordInputController.text.trim() != realPassword) {
                       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Contraseña incorrecta"), backgroundColor: Colors.red));
                       return;
                     }
 
                     String path = "torneos/$selectedClubKey/mesa_$mesaSeleccionada";
-                    
-                    // Actualizamos maxSets
-                    await FirebaseDatabase.instance.ref(path).update({
-                      "maxSets": setsSeleccionados
-                    });
+                    await FirebaseDatabase.instance.ref(path).update({ "maxSets": setsSeleccionados });
 
                     if (context.mounted) {
                       Navigator.pop(context);
@@ -504,7 +462,7 @@ class _SeleccionModoState extends State<SeleccionModo> {
 
   // --- LÓGICA: VER RESULTADOS ONLINE (TV) ---
   void _mostrarDialogoTVTorneo() async {
-    await _cargarClubesFromFirebase(); // Cargar lista fresca
+    await _cargarClubesFromFirebase(); 
 
     String? selectedClubKey;
     bool buscando = false;
@@ -543,10 +501,7 @@ class _SeleccionModoState extends State<SeleccionModo> {
                           isExpanded: true,
                           dropdownColor: Colors.grey[850],
                           items: _clubesDisponibles.map((club) {
-                            return DropdownMenuItem<String>(
-                              value: club['key'],
-                              child: Text(club['nombre']!),
-                            );
+                            return DropdownMenuItem<String>(value: club['key'], child: Text(club['nombre']!));
                           }).toList(),
                           onChanged: (val) {
                             setStateDialog(() => selectedClubKey = val);
@@ -566,26 +521,19 @@ class _SeleccionModoState extends State<SeleccionModo> {
                   onPressed: () {
                     setStateDialog(() => buscando = true);
                     
-                    // Consultamos cantidad de mesas para ese club
                     FirebaseDatabase.instance.ref("torneos/$selectedClubKey/config/cantidadMesas").get().then((snapshot) {
                       if (snapshot.exists && snapshot.value != null) {
                         int mesas = int.tryParse(snapshot.value.toString()) ?? 6;
                         if (context.mounted) {
                           Navigator.pop(context);
-                          Navigator.pushNamed(context, '/tv_torneo', arguments: {
-                            'clubKey': selectedClubKey,
-                            'mesas': mesas
-                          });
+                          Navigator.pushNamed(context, '/tv_torneo', arguments: { 'clubKey': selectedClubKey, 'mesas': mesas });
                         }
                       }
                     }).catchError((e) {
                        setStateDialog(() => buscando = false);
                     });
                   },
-                  child: const Text(
-                    "VER PANTALLA", 
-                    style: TextStyle(color: Colors.white70)
-                  ),
+                  child: const Text("VER PANTALLA", style: TextStyle(color: Colors.white70)),
                 ),
             ],
           );
@@ -629,11 +577,7 @@ class _SeleccionModoState extends State<SeleccionModo> {
       child: ElevatedButton.icon(
         icon: Icon(icon, size: 28),
         label: Text(text, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-        style: ElevatedButton.styleFrom(
-          backgroundColor: color,
-          foregroundColor: Colors.white70,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        ),
+        style: ElevatedButton.styleFrom(backgroundColor: color, foregroundColor: Colors.white70, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
         onPressed: onTap,
       ),
     );
@@ -641,7 +585,7 @@ class _SeleccionModoState extends State<SeleccionModo> {
 }
 
 // ==========================================
-// 2. PANTALLA CONTROL (DINÁMICA)
+// 2. PANTALLA CONTROL (DINÁMICA Y SEGURA PARA iOS)
 // ==========================================
 class PantallaControl extends StatefulWidget {
   final String firebasePath; 
@@ -658,6 +602,11 @@ class _PantallaControlState extends State<PantallaControl> {
   final FocusNode _focusA = FocusNode();
   final FocusNode _focusB = FocusNode();
   bool _procesando = false;
+  bool _permitirSalida = false; 
+
+  // Variables de Estado para los Carteles Nativos
+  bool _mostrarOverlayReset = false;
+  bool _mostrarOverlaySalir = false;
 
   @override
   void initState() {
@@ -710,7 +659,7 @@ class _PantallaControlState extends State<PantallaControl> {
       int pB = data['puntosB'] ?? 0;
       int sA = data['setsA'] ?? 0;
       int sB = data['setsB'] ?? 0;
-      int maxSets = data['maxSets'] ?? 3; // Lee la configuración que guardamos al entrar
+      int maxSets = data['maxSets'] ?? 3;
       int setsParaGanar = (maxSets / 2).ceil();
 
       bool partidoYaTerminado = (sA >= setsParaGanar || sB >= setsParaGanar);
@@ -767,12 +716,11 @@ class _PantallaControlState extends State<PantallaControl> {
 
   void actualizarNombre(String equipo, String nombre) { _ref.update({'nombre$equipo': nombre}); }
   void cambiarSaqueInicial(bool esA) { _ref.update({'saqueInicialA': esA}); }
+  
   void reset() { 
-    // Al resetear, mantenemos el maxSets
     _ref.update({ 'puntosA': 0, 'puntosB': 0, 'setsA': 0, 'setsB': 0, 'historialSets': [], 'saqueInicialA': null, 'nombreA': "Jugador 1", 'nombreB': "Jugador 2" }); 
   }
 
-    // ALERTA: FALTA SAQUE
   void _mostrarAlertaSaque(BuildContext context) {
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
@@ -806,7 +754,6 @@ class _PantallaControlState extends State<PantallaControl> {
     );
   }
 
-  // ALERTA: PARTIDO TERMINADO
   void _mostrarAlertaFinPartido(BuildContext context, String ganador) {
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
@@ -840,91 +787,206 @@ class _PantallaControlState extends State<PantallaControl> {
     );
   }
 
+  // ==============================================================
+  // CARTELES CUSTOM (OVERLAYS)
+  // ==============================================================
+  Widget _buildCustomOverlay({
+    required String titulo,
+    required String mensaje,
+    required String txtAceptar,
+    required Color colorAceptar,
+    required VoidCallback onAceptar,
+    required VoidCallback onCancelar,
+  }) {
+    return Positioned.fill(
+      child: GestureDetector(
+        onTap: () {}, // Evitar toques accidentales
+        child: Container(
+          color: Colors.black.withOpacity(0.8),
+          child: Center(
+            child: Container(
+              margin: const EdgeInsets.symmetric(horizontal: 40),
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: Colors.grey[900],
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.white24)
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(titulo, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white)),
+                  const SizedBox(height: 15),
+                  Text(mensaje, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white70, fontSize: 16)),
+                  const SizedBox(height: 25),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      TextButton(
+                        onPressed: onCancelar,
+                        child: const Text("Cancelar", style: TextStyle(fontSize: 16)),
+                      ),
+                      ElevatedButton(
+                        style: ElevatedButton.styleFrom(backgroundColor: colorAceptar),
+                        onPressed: onAceptar,
+                        child: Text(txtAceptar, style: const TextStyle(fontSize: 16, color: Colors.white)),
+                      ),
+                    ],
+                  )
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final esHorizontal = MediaQuery.of(context).orientation == Orientation.landscape;
     if (esHorizontal) return const Scaffold(backgroundColor: Colors.black, body: Center(child: Text("GIRA EL TELÉFONO", style: TextStyle(color: Colors.white))));
 
-    return Scaffold(
-      resizeToAvoidBottomInset: false,
-      appBar: AppBar(
-        title: Text("Mesa: ${widget.firebasePath.split('_').last}"),
-        actions: [
-          Padding(padding: const EdgeInsets.only(right: 10), child: SizedBox(width: 40, height: 40, child: GoogleCastButton())),
-          IconButton(icon: const Icon(Icons.refresh), onPressed: reset)
-        ],          
+    return PopScope(
+      canPop: _permitirSalida,
+      onPopInvokedWithResult: (bool didPop, Object? result) async {
+        if (didPop) return;
+        // Evitamos spamear el cartel de salir si ya hay algún cartel abierto
+        if (_mostrarOverlaySalir || _mostrarOverlayReset) return; 
+        
+        setState(() { _mostrarOverlaySalir = true; });
+      },
+      child: Scaffold(
+        resizeToAvoidBottomInset: false,
+        appBar: AppBar(
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back), // Restaurado icono original
+            // Se bloquea el botón atrás si hay un overlay abierto
+            onPressed: (_mostrarOverlaySalir || _mostrarOverlayReset) ? null : () {
+               setState(() { _mostrarOverlaySalir = true; });
+            },
+          ),
+          title: Text("Mesa: ${widget.firebasePath.split('_').last}"),
+          actions: [
+            // Restaurado a la posición original: Primero el Cast, luego el Reset
+            Padding(
+              padding: const EdgeInsets.only(right: 10),
+              child: SizedBox(width: 40, height: 40, child: GoogleCastButton())
+            ),
+            IconButton(
+              icon: const Icon(Icons.refresh), 
+              // Se bloquea el botón reset si hay un overlay abierto
+              onPressed: (_mostrarOverlaySalir || _mostrarOverlayReset) ? null : () {
+                setState(() { _mostrarOverlayReset = true; });
+              }
+            ),
+          ],          
+        ),
+        body: Stack(
+          children: [
+            // --- 1. CONTENIDO PRINCIPAL ---
+            StreamBuilder(
+              stream: _ref.onValue,
+              builder: (context, snapshot) {
+                  if (!snapshot.hasData || snapshot.data!.snapshot.value == null) return const Center(child: CircularProgressIndicator());
+                  final data = Map<String, dynamic>.from(snapshot.data!.snapshot.value as Map);
+                  
+                  int pA = data['puntosA'] ?? 0; int pB = data['puntosB'] ?? 0;
+                  int sA = data['setsA'] ?? 0; int sB = data['setsB'] ?? 0;
+                  String nA = data['nombreA'] ?? "Jugador 1"; String nB = data['nombreB'] ?? "Jugador 2";
+                  bool? saqueInicialA = data['saqueInicialA'];
+                  List<Map<String, dynamic>> historial = [];
+                  if (data['historialSets'] != null) {
+                     try { final dynamic raw = data['historialSets'];
+                     if (raw is List) historial = List<Map<String, dynamic>>.from(raw.map((e) => Map<String, dynamic>.from(e as Map)));
+                     else if (raw is Map) historial = List<Map<String, dynamic>>.from(raw.values.map((e) => Map<String, dynamic>.from(e as Map)));
+                     } catch (e) { historial = []; }
+                  }
+
+                  if (_nombreAController.text != nA && !_focusA.hasFocus) _nombreAController.text = nA;
+                  if (_nombreBController.text != nB && !_focusB.hasFocus) _nombreBController.text = nB;
+
+                  bool bloqueado = (pA + pB) >= 2 || sA > 0 || sB > 0;
+                  int totalPuntos = pA + pB;
+                  int setActual = sA + sB + 1;
+                  bool esSetImpar = (setActual % 2 == 1);
+                  bool safeSaque = saqueInicialA ?? true;
+                  bool haySaqueDefinido = saqueInicialA != null;
+                  bool saqueInicialEnEsteSet = esSetImpar ? safeSaque : !safeSaque;
+                  bool turnoBaseParaA;
+                  if (pA >= 10 && pB >= 10) turnoBaseParaA = (totalPuntos % 2 == 0);
+                  else turnoBaseParaA = ((totalPuntos ~/ 2) % 2 == 0);
+                  bool saqueParaA = saqueInicialEnEsteSet ? turnoBaseParaA : !turnoBaseParaA;
+                  bool invertirLados = (sA + sB) % 2 != 0;
+                  bool flechaIzquierda = (saqueParaA == !invertirLados);
+
+                  Widget topAzul = Row(children: [
+                     Expanded(child: TextField(controller: _nombreAController, focusNode: _focusA, style: const TextStyle(color: Colors.blueAccent, fontSize: 18), cursorColor: Colors.blueAccent, decoration: const InputDecoration(isDense: true, focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.blueAccent, width: 2)), enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)), hintStyle: TextStyle(color: Colors.white24)), onChanged: (v) => actualizarNombre('A', v), onTap: () => _limpiarSiEsDefault(_nombreAController, "Jugador 1"))),
+                     const SizedBox(width: 5),
+                     _BotonSaqueConPelota(seleccionado: saqueInicialA == true, bloqueado: bloqueado, color: Colors.blue[800]!, onTap: () => cambiarSaqueInicial(true)),
+                  ]);
+                  Widget topRojo = Row(children: [
+                     Expanded(child: TextField(controller: _nombreBController, focusNode: _focusB, style: const TextStyle(color: Colors.redAccent, fontSize: 18), cursorColor: Colors.redAccent, decoration: const InputDecoration(isDense: true, focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.redAccent, width: 2)), enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)), hintStyle: TextStyle(color: Colors.white24)), onChanged: (v) => actualizarNombre('B', v), onTap: () => _limpiarSiEsDefault(_nombreBController, "Jugador 2"))),
+                     const SizedBox(width: 5),
+                     _BotonSaqueConPelota(seleccionado: saqueInicialA == false, bloqueado: bloqueado, color: Colors.red[800]!, onTap: () => cambiarSaqueInicial(false)),
+                  ]);
+
+                  Widget scoreAzul = Column(children: [Text("$pA", style: const TextStyle(color: Colors.white, fontSize: 80, height: 1, fontWeight: FontWeight.bold))]);
+                  Widget scoreRojo = Column(children: [Text("$pB", style: const TextStyle(color: Colors.white, fontSize: 80, height: 1, fontWeight: FontWeight.bold))]);
+
+                  Widget botonAzul = _BotonJugador(color: Colors.blue[900]!, label: "AZUL", onSumar: () => actualizarPunto('A', 1, saqueInicialA), onRestar: () => actualizarPunto('A', -1, saqueInicialA));
+                  Widget botonRojo = _BotonJugador(color: Colors.red[900]!, label: "ROJO", onSumar: () => actualizarPunto('B', 1, saqueInicialA), onRestar: () => actualizarPunto('B', -1, saqueInicialA));
+
+                  Widget indicadorSaque = Opacity(
+                     opacity: haySaqueDefinido ? 1.0 : 0.0,
+                     child: Container(
+                       width: 65, height: 38, alignment: Alignment.center,
+                       decoration: BoxDecoration(color: Colors.grey[900], border: Border.all(color: saqueParaA ? Colors.blueAccent : Colors.redAccent, width: 2), borderRadius: BorderRadius.circular(30)),
+                       child: Icon(flechaIzquierda ? Icons.arrow_back : Icons.arrow_forward, color: Colors.white, size: 26, shadows: const [Shadow(color: Colors.white, offset: Offset(0.5, 0)), Shadow(color: Colors.white, offset: Offset(-0.5, 0)), Shadow(color: Colors.white, offset: Offset(0, 0.5)), Shadow(color: Colors.white, offset: Offset(0, -0.5))]),
+                     ),
+                  );
+
+                  return Column(
+                    children: [
+                      Padding(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5), child: Row(children: [Expanded(child: invertirLados ? topRojo : topAzul), const Padding(padding: EdgeInsets.symmetric(horizontal: 8.0), child: Text("VS", style: TextStyle(color: Colors.grey, fontSize: 10))), Expanded(child: invertirLados ? topAzul : topRojo)])),
+                      Padding(padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0), child: _TablaPuntuacion(nombreA: nA, nombreB: nB, setsA: sA, setsB: sB, historial: historial)),
+                      Padding(padding: const EdgeInsets.symmetric(vertical: 10), child: Row(children: [Expanded(child: Center(child: invertirLados ? scoreRojo : scoreAzul)), indicadorSaque, Expanded(child: Center(child: invertirLados ? scoreAzul : scoreRojo))])),
+                      Expanded(child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: invertirLados ? [botonRojo, botonAzul] : [botonAzul, botonRojo])),
+                    ],
+                  );
+              }
+            ),
+
+            // --- 2. CAPA SUPERPUESTA PARA RESET ---
+            if (_mostrarOverlayReset)
+              _buildCustomOverlay(
+                titulo: "Reiniciar Partido",
+                mensaje: "¿Estás seguro que deseas reiniciar todos los puntos y sets de esta mesa?",
+                txtAceptar: "REINICIAR",
+                colorAceptar: Colors.red[800]!,
+                onCancelar: () => setState(() => _mostrarOverlayReset = false),
+                onAceptar: () {
+                  reset();
+                  setState(() => _mostrarOverlayReset = false);
+                }
+              ),
+
+            // --- 3. CAPA SUPERPUESTA PARA SALIR ---
+            if (_mostrarOverlaySalir)
+               _buildCustomOverlay(
+                titulo: "Salir de la Mesa",
+                mensaje: "¿Seguro que deseas volver al menú? El partido mantendrá su estado actual en la pantalla de TV.",
+                txtAceptar: "SALIR",
+                colorAceptar: Colors.red[800]!,
+                onCancelar: () => setState(() => _mostrarOverlaySalir = false),
+                onAceptar: () {
+                  setState(() => _permitirSalida = true);
+                  Navigator.pop(context);
+                }
+              ),
+          ],
+        )
       ),
-      body: StreamBuilder(
-        stream: _ref.onValue,
-        builder: (context, snapshot) {
-            if (!snapshot.hasData || snapshot.data!.snapshot.value == null) return const Center(child: CircularProgressIndicator());
-            final data = Map<String, dynamic>.from(snapshot.data!.snapshot.value as Map);
-            
-            int pA = data['puntosA'] ?? 0; int pB = data['puntosB'] ?? 0;
-            int sA = data['setsA'] ?? 0; int sB = data['setsB'] ?? 0;
-            String nA = data['nombreA'] ?? "Jugador 1"; String nB = data['nombreB'] ?? "Jugador 2";
-            bool? saqueInicialA = data['saqueInicialA'];
-            List<Map<String, dynamic>> historial = [];
-            if (data['historialSets'] != null) {
-               try { final dynamic raw = data['historialSets'];
-               if (raw is List) historial = List<Map<String, dynamic>>.from(raw.map((e) => Map<String, dynamic>.from(e as Map)));
-               else if (raw is Map) historial = List<Map<String, dynamic>>.from(raw.values.map((e) => Map<String, dynamic>.from(e as Map)));
-               } catch (e) { historial = []; }
-            }
-
-            if (_nombreAController.text != nA && !_focusA.hasFocus) _nombreAController.text = nA;
-            if (_nombreBController.text != nB && !_focusB.hasFocus) _nombreBController.text = nB;
-
-            bool bloqueado = (pA + pB) >= 2 || sA > 0 || sB > 0;
-            int totalPuntos = pA + pB;
-            int setActual = sA + sB + 1;
-            bool esSetImpar = (setActual % 2 == 1);
-            bool safeSaque = saqueInicialA ?? true;
-            bool haySaqueDefinido = saqueInicialA != null;
-            bool saqueInicialEnEsteSet = esSetImpar ? safeSaque : !safeSaque;
-            bool turnoBaseParaA;
-            if (pA >= 10 && pB >= 10) turnoBaseParaA = (totalPuntos % 2 == 0);
-            else turnoBaseParaA = ((totalPuntos ~/ 2) % 2 == 0);
-            bool saqueParaA = saqueInicialEnEsteSet ? turnoBaseParaA : !turnoBaseParaA;
-            bool invertirLados = (sA + sB) % 2 != 0;
-            bool flechaIzquierda = (saqueParaA == !invertirLados);
-
-            Widget topAzul = Row(children: [
-               Expanded(child: TextField(controller: _nombreAController, focusNode: _focusA, style: const TextStyle(color: Colors.blueAccent, fontSize: 18), cursorColor: Colors.blueAccent, decoration: const InputDecoration(isDense: true, focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.blueAccent, width: 2)), enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)), hintStyle: TextStyle(color: Colors.white24)), onChanged: (v) => actualizarNombre('A', v), onTap: () => _limpiarSiEsDefault(_nombreAController, "Jugador 1"))),
-               const SizedBox(width: 5),
-               _BotonSaqueConPelota(seleccionado: saqueInicialA == true, bloqueado: bloqueado, color: Colors.blue[800]!, onTap: () => cambiarSaqueInicial(true)),
-            ]);
-            Widget topRojo = Row(children: [
-               Expanded(child: TextField(controller: _nombreBController, focusNode: _focusB, style: const TextStyle(color: Colors.redAccent, fontSize: 18), cursorColor: Colors.redAccent, decoration: const InputDecoration(isDense: true, focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.redAccent, width: 2)), enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)), hintStyle: TextStyle(color: Colors.white24)), onChanged: (v) => actualizarNombre('B', v), onTap: () => _limpiarSiEsDefault(_nombreBController, "Jugador 2"))),
-               const SizedBox(width: 5),
-               _BotonSaqueConPelota(seleccionado: saqueInicialA == false, bloqueado: bloqueado, color: Colors.red[800]!, onTap: () => cambiarSaqueInicial(false)),
-            ]);
-
-            Widget scoreAzul = Column(children: [Text("$pA", style: const TextStyle(color: Colors.white, fontSize: 80, height: 1, fontWeight: FontWeight.bold))]);
-            Widget scoreRojo = Column(children: [Text("$pB", style: const TextStyle(color: Colors.white, fontSize: 80, height: 1, fontWeight: FontWeight.bold))]);
-
-            Widget botonAzul = _BotonJugador(color: Colors.blue[900]!, label: "AZUL", onSumar: () => actualizarPunto('A', 1, saqueInicialA), onRestar: () => actualizarPunto('A', -1, saqueInicialA));
-            Widget botonRojo = _BotonJugador(color: Colors.red[900]!, label: "ROJO", onSumar: () => actualizarPunto('B', 1, saqueInicialA), onRestar: () => actualizarPunto('B', -1, saqueInicialA));
-
-            Widget indicadorSaque = Opacity(
-               opacity: haySaqueDefinido ? 1.0 : 0.0,
-               child: Container(
-                 width: 65, height: 38, alignment: Alignment.center,
-                 decoration: BoxDecoration(color: Colors.grey[900], border: Border.all(color: saqueParaA ? Colors.blueAccent : Colors.redAccent, width: 2), borderRadius: BorderRadius.circular(30)),
-                 child: Icon(flechaIzquierda ? Icons.arrow_back : Icons.arrow_forward, color: Colors.white, size: 26, shadows: const [Shadow(color: Colors.white, offset: Offset(0.5, 0)), Shadow(color: Colors.white, offset: Offset(-0.5, 0)), Shadow(color: Colors.white, offset: Offset(0, 0.5)), Shadow(color: Colors.white, offset: Offset(0, -0.5))]),
-               ),
-            );
-
-            return Column(
-              children: [
-                Padding(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5), child: Row(children: [Expanded(child: invertirLados ? topRojo : topAzul), const Padding(padding: EdgeInsets.symmetric(horizontal: 8.0), child: Text("VS", style: TextStyle(color: Colors.grey, fontSize: 10))), Expanded(child: invertirLados ? topAzul : topRojo)])),
-                Padding(padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0), child: _TablaPuntuacion(nombreA: nA, nombreB: nB, setsA: sA, setsB: sB, historial: historial)),
-                Padding(padding: const EdgeInsets.symmetric(vertical: 10), child: Row(children: [Expanded(child: Center(child: invertirLados ? scoreRojo : scoreAzul)), indicadorSaque, Expanded(child: Center(child: invertirLados ? scoreAzul : scoreRojo))])),
-                Expanded(child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: invertirLados ? [botonRojo, botonAzul] : [botonAzul, botonRojo])),
-              ],
-            );
-        }
-      )
     );
   }
 }
@@ -933,7 +995,7 @@ class _PantallaControlState extends State<PantallaControl> {
 // 3. PANTALLA TV TORNEO
 // ==========================================
 class PantallaTVTorneo extends StatelessWidget {
-  final String clubKey; // Clave saneada (ej: CLUBTENIS)
+  final String clubKey;
   final int mesasCount;
 
   const PantallaTVTorneo({super.key, required this.clubKey, required this.mesasCount});
@@ -988,7 +1050,8 @@ class _CeldaMesaConectada extends StatelessWidget {
           if (!snapshot.hasData || snapshot.data!.snapshot.value == null) {
             return const TvScoreboard(
                player1Name: "", player2Name: "", player1Score: 0, player2Score: 0, 
-               player1Sets: 0, player2Sets: 0, setHistory: [], servingPlayer: null
+               player1Sets: 0, player2Sets: 0, setHistory: [], servingPlayer: null,
+               initialServer: null, 
             );
           }
 
@@ -1019,7 +1082,11 @@ class _CeldaMesaConectada extends StatelessWidget {
           }
 
           int? quienSaca;
+          int? quienInicio;
+
           if (saqueInicialA != null) {
+            quienInicio = saqueInicialA ? 1 : 2;
+
             int totalPuntos = pA + pB;
             int setActual = sA + sB + 1;
             bool esSetImpar = (setActual % 2 == 1);
@@ -1046,6 +1113,7 @@ class _CeldaMesaConectada extends StatelessWidget {
                 player2Sets: sB,
                 setHistory: historialFormateado,
                 servingPlayer: quienSaca,
+                initialServer: quienInicio, 
               ),
             ),
           );

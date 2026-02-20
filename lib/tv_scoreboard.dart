@@ -8,7 +8,8 @@ class TvScoreboard extends StatelessWidget {
   final int player1Sets;
   final int player2Sets;
   final List<String> setHistory;
-  final int? servingPlayer; // 1: Jugador 1 (Izq), 2: Jugador 2 (Der)
+  final int? servingPlayer; // 1: Jugador 1 (Izq), 2: Jugador 2 (Der) [Dinámico para la flecha]
+  final int? initialServer; // 1: Jugador 1, 2: Jugador 2 [Fijo para la pelota]
 
   const TvScoreboard({
     super.key,
@@ -20,6 +21,7 @@ class TvScoreboard extends StatelessWidget {
     required this.player2Sets,
     required this.setHistory,
     required this.servingPlayer,
+    required this.initialServer, // <-- Añadido
   });
 
   @override
@@ -48,21 +50,20 @@ class TvScoreboard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            // --- 1. Encabezado con Nombres y Saque ---
+            // --- 1. Encabezado con Nombres y Saque Fijo ---
             _buildHeader(),
             
             const SizedBox(height: 10),
             
-            // --- 2. Tabla de Historial (Estilo Control) ---
-            // Usamos un Container con altura fija pequeña para que no se expanda gigante
+            // --- 2. Tabla de Historial ---
             SizedBox(
               height: 110, 
               child: _buildSetHistoryGrid(),
             ),
 
-            const Spacer(), // Empuja el marcador hacia el centro/abajo
+            const Spacer(),
 
-            // --- 3. Puntaje Grande + FLECHA DE SAQUE ---
+            // --- 3. Puntaje Grande + FLECHA DE SAQUE DINÁMICA ---
             _buildBigScoreWithArrow(),
             
             const Spacer(),
@@ -73,8 +74,9 @@ class TvScoreboard extends StatelessWidget {
   }
 
   Widget _buildHeader() {
-    bool p1Serving = servingPlayer == 1;
-    bool p2Serving = servingPlayer == 2;
+    // Usamos initialServer para que la pelota quede fija en quien arrancó
+    bool p1Started = initialServer == 1;
+    bool p2Started = initialServer == 2;
 
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -86,9 +88,9 @@ class TvScoreboard extends StatelessWidget {
               player1Name.toUpperCase(),
               style: const TextStyle(color: Colors.blueAccent, fontSize: 28, fontWeight: FontWeight.bold),
             ),
-            if (p1Serving) ...[
+            if (p1Started) ...[
               const SizedBox(width: 10),
-              const Icon(Icons.sports_tennis, color: Colors.white, size: 20),
+              ClipOval(child: Image.asset('assets/pelota_donic.jpg', width: 28, height: 28, fit: BoxFit.cover)),
             ]
           ],
         ),
@@ -98,8 +100,8 @@ class TvScoreboard extends StatelessWidget {
         // JUGADOR 2
         Row(
           children: [
-            if (p2Serving) ...[
-              const Icon(Icons.sports_tennis, color: Colors.white, size: 20),
+            if (p2Started) ...[
+              ClipOval(child: Image.asset('assets/pelota_donic.jpg', width: 28, height: 28, fit: BoxFit.cover)),
               const SizedBox(width: 10),
             ],
             Text(
@@ -112,17 +114,15 @@ class TvScoreboard extends StatelessWidget {
     );
   }
 
-  // Construye la grilla idéntica a PantallaControl (_TablaPuntuacion)
   Widget _buildSetHistoryGrid() {
     return Container(
       decoration: BoxDecoration(
-        color: const Color(0xFF1E1E1E), // Gris oscuro background
+        color: const Color(0xFF1E1E1E), 
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: Colors.white24),
       ),
       child: Column(
         children: [
-          // Fila Jugador 1
           Expanded(child: _buildPlayerRow(
             playerIndex: 1, 
             name: player1Name, 
@@ -131,7 +131,6 @@ class TvScoreboard extends StatelessWidget {
             highlightColor: Colors.blueAccent.withOpacity(0.4),
             showBottomBorder: true
           )),
-          // Fila Jugador 2
           Expanded(child: _buildPlayerRow(
             playerIndex: 2, 
             name: player2Name, 
@@ -153,7 +152,6 @@ class TvScoreboard extends StatelessWidget {
     required Color highlightColor,
     required bool showBottomBorder,
   }) {
-    // Generamos las 5 celdas de sets
     List<Widget> setCells = List.generate(5, (index) {
       String scoreText = "";
       Color cellBg = Colors.transparent;
@@ -161,22 +159,19 @@ class TvScoreboard extends StatelessWidget {
       FontWeight weight = FontWeight.normal;
 
       if (index < setHistory.length) {
-        // Parseamos "11-9"
         var parts = setHistory[index].split("-");
         if (parts.length == 2) {
           int s1 = int.parse(parts[0]);
           int s2 = int.parse(parts[1]);
           
-          // Score de ESTE jugador
           int myScore = playerIndex == 1 ? s1 : s2;
           int opponentScore = playerIndex == 1 ? s2 : s1;
           scoreText = myScore.toString();
 
-          // Lógica de Ganador de Set (Igual al Control)
           bool IWon = myScore > opponentScore;
           
           if (IWon) {
-            cellBg = highlightColor; // Azul o Rojo translúcido
+            cellBg = highlightColor;
             textColor = Colors.white;
             weight = FontWeight.bold;
           }
@@ -187,7 +182,7 @@ class TvScoreboard extends StatelessWidget {
         flex: 1,
         child: Container(
           decoration: BoxDecoration(
-            color: cellBg, // El color de fondo si ganó
+            color: cellBg, 
             border: const Border(left: BorderSide(color: Colors.white10)),
           ),
           alignment: Alignment.center,
@@ -205,7 +200,6 @@ class TvScoreboard extends StatelessWidget {
       ),
       child: Row(
         children: [
-          // Nombre (Ocupa más espacio)
           Expanded(
             flex: 3, 
             child: Padding(
@@ -217,9 +211,7 @@ class TvScoreboard extends StatelessWidget {
               ),
             ),
           ),
-          // Celdas de Sets
           ...setCells,
-          // Total Sets (Cuadro Sólido Final)
           Expanded(
             flex: 2,
             child: Container(
@@ -244,18 +236,11 @@ class TvScoreboard extends StatelessWidget {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       children: [
-        // Score 1
         Text(
           player1Score.toString(),
-          style: const TextStyle(
-            color: Colors.white, 
-            fontSize: 200, 
-            fontWeight: FontWeight.bold,
-            height: 1,
-          ),
+          style: const TextStyle(color: Colors.white, fontSize: 200, fontWeight: FontWeight.bold, height: 1),
         ),
 
-        // FLECHA CENTRAL (Estilo idéntico a PantallaControl)
         Container(
            width: 100, 
            height: 60, 
@@ -263,7 +248,7 @@ class TvScoreboard extends StatelessWidget {
            decoration: BoxDecoration(
              color: Colors.grey[900], 
              border: Border.all(color: colorBorde, width: 3),
-             borderRadius: BorderRadius.circular(50) // Bordes redondeados
+             borderRadius: BorderRadius.circular(50) 
            ),
            child: Icon(
              iconoFlecha, 
@@ -278,15 +263,9 @@ class TvScoreboard extends StatelessWidget {
            ),
          ),
 
-        // Score 2
         Text(
           player2Score.toString(),
-          style: const TextStyle(
-            color: Colors.white, 
-            fontSize: 200, 
-            fontWeight: FontWeight.bold,
-            height: 1,
-          ),
+          style: const TextStyle(color: Colors.white, fontSize: 200, fontWeight: FontWeight.bold, height: 1),
         ),
       ],
     );
