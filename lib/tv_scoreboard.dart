@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:async'; // Necesario para el Timer en la TV
 
 class TvScoreboard extends StatelessWidget {
   final String player1Name;
@@ -8,8 +9,10 @@ class TvScoreboard extends StatelessWidget {
   final int player1Sets;
   final int player2Sets;
   final List<String> setHistory;
-  final int? servingPlayer; // 1: Jugador 1 (Izq), 2: Jugador 2 (Der) [Dinámico para la flecha]
-  final int? initialServer; // 1: Jugador 1, 2: Jugador 2 [Fijo para la pelota]
+  final int? servingPlayer; 
+  final int? initialServer; 
+  final int? timeoutEndMs;
+  final int maxSets; // <-- Añadido: Para saber si es a 3 o 5 sets
 
   const TvScoreboard({
     super.key,
@@ -21,7 +24,9 @@ class TvScoreboard extends StatelessWidget {
     required this.player2Sets,
     required this.setHistory,
     required this.servingPlayer,
-    required this.initialServer, // <-- Añadido
+    required this.initialServer,
+    required this.timeoutEndMs,
+    required this.maxSets, // <-- Añadido
   });
 
   @override
@@ -45,72 +50,36 @@ class TvScoreboard extends StatelessWidget {
 
     return Scaffold(
       backgroundColor: Colors.black,
-      body: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            // --- 1. Encabezado con Nombres y Saque Fijo ---
-            _buildHeader(),
-            
-            const SizedBox(height: 10),
-            
-            // --- 2. Tabla de Historial ---
-            SizedBox(
-              height: 110, 
-              child: _buildSetHistoryGrid(),
+      body: Stack(
+        children: [
+          // CONTENIDO PRINCIPAL (Marcador)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                SizedBox(
+                  height: 140, 
+                  child: _buildSetHistoryGrid(),
+                ),
+                const Spacer(),
+                _buildBigScoreWithArrow(),
+                const Spacer(),
+              ],
             ),
+          ),
 
-            const Spacer(),
-
-            // --- 3. Puntaje Grande + FLECHA DE SAQUE DINÁMICA ---
-            _buildBigScoreWithArrow(),
-            
-            const Spacer(),
-          ],
-        ),
+          // CAPA SUPERPUESTA: CRONÓMETRO DE TIEMPO MUERTO
+          if (timeoutEndMs != null)
+            Align(
+              alignment: Alignment.bottomCenter,
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 20.0), // Margen desde abajo
+                child: _TvTimerDisplay(endTimeMs: timeoutEndMs!),
+              ),
+            ),
+        ],
       ),
-    );
-  }
-
-  Widget _buildHeader() {
-    // Usamos initialServer para que la pelota quede fija en quien arrancó
-    bool p1Started = initialServer == 1;
-    bool p2Started = initialServer == 2;
-
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        // JUGADOR 1
-        Row(
-          children: [
-             Text(
-              player1Name.toUpperCase(),
-              style: const TextStyle(color: Colors.blueAccent, fontSize: 28, fontWeight: FontWeight.bold),
-            ),
-            if (p1Started) ...[
-              const SizedBox(width: 10),
-              ClipOval(child: Image.asset('assets/pelota_donic.jpg', width: 28, height: 28, fit: BoxFit.cover)),
-            ]
-          ],
-        ),
-        
-        const Text("vs", style: TextStyle(color: Colors.grey, fontSize: 18)),
-        
-        // JUGADOR 2
-        Row(
-          children: [
-            if (p2Started) ...[
-              ClipOval(child: Image.asset('assets/pelota_donic.jpg', width: 28, height: 28, fit: BoxFit.cover)),
-              const SizedBox(width: 10),
-            ],
-            Text(
-              player2Name.toUpperCase(),
-              style: const TextStyle(color: Colors.redAccent, fontSize: 28, fontWeight: FontWeight.bold),
-            ),
-          ],
-        ),
-      ],
     );
   }
 
@@ -129,7 +98,8 @@ class TvScoreboard extends StatelessWidget {
             totalSets: player1Sets,
             baseColor: Colors.blue.shade900,
             highlightColor: Colors.blueAccent.withOpacity(0.4),
-            showBottomBorder: true
+            showBottomBorder: true,
+            isInitialServer: initialServer == 1,
           )),
           Expanded(child: _buildPlayerRow(
             playerIndex: 2, 
@@ -137,7 +107,8 @@ class TvScoreboard extends StatelessWidget {
             totalSets: player2Sets,
             baseColor: Colors.red.shade900,
             highlightColor: Colors.redAccent.withOpacity(0.4),
-            showBottomBorder: false
+            showBottomBorder: false,
+            isInitialServer: initialServer == 2,
           )),
         ],
       ),
@@ -151,6 +122,7 @@ class TvScoreboard extends StatelessWidget {
     required Color baseColor,
     required Color highlightColor,
     required bool showBottomBorder,
+    required bool isInitialServer,
   }) {
     List<Widget> setCells = List.generate(5, (index) {
       String scoreText = "";
@@ -158,7 +130,13 @@ class TvScoreboard extends StatelessWidget {
       Color textColor = Colors.white38;
       FontWeight weight = FontWeight.normal;
 
-      if (index < setHistory.length) {
+      // LÓGICA DE GUIONES: Si es a 3 sets y es el 4to o 5to set (index 3 o 4)
+      if (maxSets == 3 && index >= 3) {
+        scoreText = "-";
+        textColor = Colors.white24;
+      } 
+      // LÓGICA NORMAL DE PUNTOS
+      else if (index < setHistory.length) {
         var parts = setHistory[index].split("-");
         if (parts.length == 2) {
           int s1 = int.parse(parts[0]);
@@ -203,11 +181,22 @@ class TvScoreboard extends StatelessWidget {
           Expanded(
             flex: 3, 
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12.0),
-              child: Text(
-                name.toUpperCase(),
-                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 38),
-                overflow: TextOverflow.ellipsis,
+              padding: const EdgeInsets.symmetric(horizontal: 16.0),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      name.toUpperCase(),
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 36),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  if (isInitialServer)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 10.0),
+                      child: ClipOval(child: Image.asset('assets/pelota_donic.jpg', width: 34, height: 34, fit: BoxFit.cover)),
+                    )
+                ],
               ),
             ),
           ),
@@ -268,6 +257,81 @@ class TvScoreboard extends StatelessWidget {
           style: const TextStyle(color: Colors.white, fontSize: 200, fontWeight: FontWeight.bold, height: 1),
         ),
       ],
+    );
+  }
+}
+
+// ==========================================
+// WIDGET INTERNO: CRONÓMETRO DE TV
+// ==========================================
+class _TvTimerDisplay extends StatefulWidget {
+  final int endTimeMs;
+  const _TvTimerDisplay({required this.endTimeMs});
+
+  @override
+  State<_TvTimerDisplay> createState() => _TvTimerDisplayState();
+}
+
+class _TvTimerDisplayState extends State<_TvTimerDisplay> {
+  late Timer _timer;
+  int _secondsLeft = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _calculateTime();
+    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      _calculateTime();
+    });
+  }
+
+  @override
+  void didUpdateWidget(_TvTimerDisplay oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.endTimeMs != widget.endTimeMs) {
+      _calculateTime();
+    }
+  }
+
+  void _calculateTime() {
+    int now = DateTime.now().millisecondsSinceEpoch;
+    int diff = ((widget.endTimeMs - now) / 1000).ceil();
+    if (diff < 0) diff = 0; 
+    
+    if (mounted) {
+      setState(() {
+        _secondsLeft = diff;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    String min = (_secondsLeft ~/ 60).toString().padLeft(2, '0');
+    String sec = (_secondsLeft % 60).toString().padLeft(2, '0');
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.8),
+        border: Border.all(color: Colors.redAccent, width: 4), 
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Text(
+        "$min:$sec", 
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 60,
+          fontWeight: FontWeight.bold,
+          letterSpacing: 4
+        ),
+      ),
     );
   }
 }
